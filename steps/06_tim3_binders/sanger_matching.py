@@ -329,7 +329,8 @@ def candidate_ref_strands(
     for kmer in set(kmers(nt_seq)):
         counts.update(kmer_index.get(kmer, ()))
     by_ref: Dict[str, Tuple[int, str]] = {}
-    for (clone_number, strand), shared in counts.items():
+    # iterate in a fixed order so that ties do not depend on Python's random set ordering
+    for (clone_number, strand), shared in sorted(counts.items(), key=lambda kv: (int(kv[0][0]), kv[0][1])):
         if shared < MIN_SHARED_KMERS:
             continue
         prev = by_ref.get(clone_number)
@@ -337,13 +338,13 @@ def candidate_ref_strands(
             by_ref[clone_number] = (shared, strand)
 
     by_label: Dict[str, List[Tuple[str, int, str]]] = defaultdict(list)
-    for clone_number, (shared, strand) in by_ref.items():
+    for clone_number, (shared, strand) in sorted(by_ref.items(), key=lambda kv: int(kv[0])):
         by_label[refs_by_id[clone_number].binding].append((clone_number, shared, strand))
 
     selected: Dict[str, List[str]] = {}
     for label_refs in by_label.values():
         for clone_number, _shared, strand in sorted(
-            label_refs, key=lambda x: x[1], reverse=True
+            label_refs, key=lambda x: (-x[1], int(x[0]))
         )[:TOP_REFS_PER_LABEL]:
             selected.setdefault(clone_number, []).append(strand)
     return selected
@@ -418,9 +419,10 @@ def match_np_to_sanger(clones: Sequence[NpClone], refs: Sequence[SangerRef]) -> 
             records.append(rec)
             continue
 
+        # sorted by clone number: equal alignments are resolved in favour of the lower clone number
         alignments = [
             aln
-            for clone_number, strands in candidates.items()
+            for clone_number, strands in sorted(candidates.items(), key=lambda kv: int(kv[0]))
             if (
                 aln := best_ref_alignment(
                     refs_by_id[clone_number],

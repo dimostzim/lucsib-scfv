@@ -30,6 +30,9 @@ COUNTS_TSV: Path
 LABELS_TSV: Path
 OUT_DIR: Path
 
+# full-read alignments below this identity are too poor to compare the two Sanger clones
+MIN_FULL_IDENTITY = 90.0
+
 DNA_COMP = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 CIGAR_RE = re.compile(r"(\d+)([=XID])")
 
@@ -308,7 +311,8 @@ def main() -> None:
     )
 
     # Final labels: the first-pass label, except that ambiguous clones whose full-read context
-    # favours the binding Sanger clone at the 0.5 margin become bind_context.
+    # favours the binding Sanger clone at the 0.5 margin, with both Sanger clones aligning to the
+    # full reads at >= MIN_FULL_IDENTITY, become bind_context.
     context_rows = {row["nt_scfv_id"]: row for row in rows}
     first_pass_confidence = {"bind": "first_pass", "no_bind": "first_pass", "ambiguous": "ambiguous", "unknown": "unknown"}
     with LABELS_TSV.open() as handle:
@@ -325,7 +329,11 @@ def main() -> None:
                 row["final_label_margin05_context"] = row["assigned_label"]
                 row["full_context_mean_delta_yes_minus_no"] = ""
                 row["confidence"] = first_pass_confidence[row["assigned_label"]]
-            elif context["margin05_dominant_call"] == "bind":
+            elif (
+                context["margin05_dominant_call"] == "bind"
+                and context["best_yes_full_identity"] >= MIN_FULL_IDENTITY
+                and context["best_no_full_identity"] >= MIN_FULL_IDENTITY
+            ):
                 row["final_label_margin05_context"] = "bind_context"
                 row["full_context_mean_delta_yes_minus_no"] = context["mean_full_identity_delta_yes_minus_no"]
                 row["confidence"] = "context_tentative_margin05"
