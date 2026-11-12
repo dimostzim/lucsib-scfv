@@ -98,9 +98,9 @@ All analyses use the per-read filtered table from step 04 and unique scFv DNA se
    `yes` clone by more than 0.5 percentage points of identity and both Sanger clones align to the full reads with at
    least 90% identity; all other labels stay as they are.
 
-When two Sanger clones of the same label, or the best clones of the two labels, align equally well to a sequence,
-the lower clone number is reported. This matters because clones 30 (`yes`) and 17 (`no`) are identical over most
-TIM-3 scFvs.
+When two Sanger clones align equally well to a sequence, the one sharing more 15-letter k-mers with it is reported,
+then the lower clone number. This matters because clones 30 (`yes`) and 17 (`no`), and clones 9 and 17 (both
+`no`), are identical over most TIM-3 scFvs.
 5. Representative sets: strict binders (`bind` only) are ranked by TIM-3 reads and selected greedily if their global
    identity to every higher-ranked selected sequence is below a threshold (95, 96 and 97% for protein sequences,
    99% for DNA); every candidate is then assigned to its nearest representative.
@@ -120,7 +120,10 @@ The pipeline reproduces the earlier analysis, with these differences:
   whose code was not kept in the earlier analysis. They were rebuilt from the saved outputs: the 90% full-read
   identity condition is the rule that reproduces the saved label counts (any threshold between 89.85% and 90.12%
   gives the same result on the earlier data);
-- step 06 resolves ties between equally good Sanger matches by clone number; earlier the choice depended on
-  Python's random set ordering and could change between runs;
+- step 06 resolves ties between equally good Sanger matches by shared k-mers and clone number; earlier the choice
+  depended on Python's random set ordering and could change between runs. On the earlier data this reproduces the
+  representative sets exactly, but 3 of the 431 context-tested clones (89 reads) change label, giving 419 instead
+  of 422 `bind_context` clones, because the `no` reference compared in the full-read step becomes clone 9 instead
+  of the identical clone 17;
 - the Python environment pins scikit-learn 1.8.0, which reproduces the earlier sequence families exactly
   (version 1.9 groups about 10% of sequences differently).

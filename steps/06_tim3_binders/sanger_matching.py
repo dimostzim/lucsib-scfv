@@ -341,12 +341,13 @@ def candidate_ref_strands(
     for clone_number, (shared, strand) in sorted(by_ref.items(), key=lambda kv: int(kv[0])):
         by_label[refs_by_id[clone_number].binding].append((clone_number, shared, strand))
 
-    selected: Dict[str, List[str]] = {}
+    chosen = []
     for label_refs in by_label.values():
-        for clone_number, _shared, strand in sorted(
-            label_refs, key=lambda x: (-x[1], int(x[0]))
-        )[:TOP_REFS_PER_LABEL]:
-            selected.setdefault(clone_number, []).append(strand)
+        chosen.extend(sorted(label_refs, key=lambda x: (-x[1], int(x[0])))[:TOP_REFS_PER_LABEL])
+    # top candidates per label by shared k-mers, ties by clone number; all candidates in that order
+    selected: Dict[str, List[str]] = {}
+    for clone_number, _shared, strand in sorted(chosen, key=lambda x: (-x[1], int(x[0]))):
+        selected.setdefault(clone_number, []).append(strand)
     return selected
 
 
@@ -419,10 +420,11 @@ def match_np_to_sanger(clones: Sequence[NpClone], refs: Sequence[SangerRef]) -> 
             records.append(rec)
             continue
 
-        # sorted by clone number: equal alignments are resolved in favour of the lower clone number
+        # candidates come ordered by shared k-mers, then clone number; equally good alignments are
+        # resolved in favour of the earlier candidate
         alignments = [
             aln
-            for clone_number, strands in sorted(candidates.items(), key=lambda kv: int(kv[0]))
+            for clone_number, strands in candidates.items()
             if (
                 aln := best_ref_alignment(
                     refs_by_id[clone_number],
