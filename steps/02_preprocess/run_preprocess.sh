@@ -2,12 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PREPROCESS_DIR="${SCRIPT_DIR}"
 
-INPUT_DIR="${INPUT_DIR:-}"
-OUTPUT_DIR="${ROOT_DIR}/preprocess_output"
-GERMLINE_DIR="${ROOT_DIR}/germlines/dog"
+INPUT_DIR=""
+OUTPUT_DIR=""
+GERMLINE_DIR=""
 THREADS=8
 MIN_LEN=0
 MAX_LEN=0
@@ -18,7 +17,7 @@ FORCE=0
 SKIP_PREPROCESS=0
 SKIP_CLEAN=0
 
-SEQ2SCFV_IMAGE_NAME="${SEQ2SCFV_IMAGE_NAME:-seq2scfv}"
+SEQ2SCFV_IMAGE_NAME="lucsib-scfv-seq2scfv"
 ORGANISM="dog"
 IG_SEQTYPE="${IG_SEQTYPE:-Ig}"
 DOMAIN_SYSTEM="${DOMAIN_SYSTEM:-imgt}"
@@ -26,15 +25,16 @@ DOMAIN_SYSTEM="${DOMAIN_SYSTEM:-imgt}"
 usage() {
   cat <<'EOF'
 Usage:
-  bash scfv_analysis/preprocess/run_preprocess_pipeline.sh [options]
+  bash steps/02_preprocess/run_preprocess.sh --input DIR --output DIR --germlines DIR [options]
 
 Pipeline steps:
   1) preprocess_reads.sh (FASTQ -> FASTA with optional orientation)
 
 Options:
   --input DIR                 Input FASTQ directory (required unless --skip-preprocess)
-  --output DIR                Output FASTA directory (default: scfv_analysis/preprocess_output)
-  --germlines DIR             Germline output/input directory (default: scfv_analysis/germlines/dog)
+  --output DIR                Output FASTA directory
+  --germlines DIR             Dog germline directory (staged by steps/00_download/get_tools.sh)
+  --image NAME                seq2scfv Docker image (default: lucsib-scfv-seq2scfv)
   --cpus N                    Threads for IgBLAST (default: 8)
   --threads N                 Alias for --cpus
   --orient MODE               none | igblast (default: igblast)
@@ -45,7 +45,6 @@ Options:
   --help                      Show this help
 
 Environment overrides:
-  SEQ2SCFV_IMAGE_NAME,
   IG_SEQTYPE, DOMAIN_SYSTEM
 EOF
 }
@@ -58,6 +57,8 @@ while [[ $# -gt 0 ]]; do
       OUTPUT_DIR="$2"; shift 2 ;;
     --germlines)
       GERMLINE_DIR="$2"; shift 2 ;;
+    --image)
+      SEQ2SCFV_IMAGE_NAME="$2"; shift 2 ;;
     --cpus|--threads)
       THREADS="$2"; shift 2 ;;
     --orient)
@@ -99,6 +100,11 @@ if [[ "${SKIP_PREPROCESS}" != "1" ]]; then
     echo "ERROR: Input directory not found: ${INPUT_DIR}" >&2
     exit 1
   fi
+fi
+
+if [[ -z "${OUTPUT_DIR}" || -z "${GERMLINE_DIR}" ]]; then
+  echo "ERROR: --output and --germlines are required." >&2
+  exit 1
 fi
 
 mkdir -p "${OUTPUT_DIR}"

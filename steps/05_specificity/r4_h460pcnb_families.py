@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""All-sequence (full candidate set) email-ready plots and summary tables."""
+"""Sequence families in the R4 H460 PCNB-specific candidate set: plots and summary tables."""
 
 from __future__ import annotations
 
@@ -295,7 +295,7 @@ def main() -> None:
     )
 
     summary_lines = [
-        "pipeline=allseq_email",
+        "pipeline=r4_h460pcnb_families",
         f"candidates_csv={Path(args.candidates_csv).resolve()}",
         f"n_candidates={len(cand)}",
         f"kmer={args.kmer}",
@@ -313,7 +313,7 @@ def main() -> None:
     params["n_candidates"] = int(len(cand))
     (outdir / "params_allseq.json").write_text(json.dumps(params, indent=2) + "\n", encoding="utf-8")
 
-    print(f"All-sequence email plots complete: {outdir}")
+    print(f"R4 H460 PCNB family analysis complete: {outdir}")
 
 
 if __name__ == "__main__":

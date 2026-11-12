@@ -1,12 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
 INPUT_PREPROCESSED=""
-RUN_NAME=""
-RUNS_DIR="${RUNS_DIR:-}"
+RUN_DIR=""
 LINKER_MODE="infer"            # infer | known
 LINKER_SEQ=""
 LINKER_MIN_ID="90"
@@ -17,8 +13,8 @@ THREADS=8
 LINKER_SAMPLE="0.1"
 FORCE=0
 
-IMAGE_NAME="${SEQ2SCFV_IMAGE_NAME:-seq2scfv}"
-GERMLINE_DIR="${GERMLINE_DIR:-${ROOT_DIR}/germlines/dog}"
+IMAGE_NAME="lucsib-scfv-seq2scfv"
+GERMLINE_DIR=""
 ORGANISM="dog"
 IG_SEQTYPE="${IG_SEQTYPE:-Ig}"
 DOMAIN_SYSTEM="${DOMAIN_SYSTEM:-imgt}"
@@ -31,14 +27,15 @@ IGBLAST_INTERNAL_DATA_DIR=""
 usage() {
   cat <<'EOF'
 Usage:
-  bash scfv_analysis/downstream/run_seq2_downstream.sh [options]
+  bash steps/03_annotate/run_seq2scfv.sh [options]
 
 Required:
   --input-preprocessed DIR      Directory with preprocessed FASTA files (barcode*.fasta)
+  --output-dir DIR              Output directory for this annotation run
+  --germlines DIR               Dog germline directory (staged by steps/00_download/get_tools.sh)
 
 Optional:
-  --run-name NAME               Run folder name under runs dir (default: run_YYYYmmdd_HHMMSS)
-  --runs-dir DIR                Parent directory for runs (default: scfv_analysis/runs)
+  --image NAME                  seq2scfv Docker image (default: lucsib-scfv-seq2scfv)
   --threads N                   Threads for IgBLAST (default: 8)
   --linker-mode MODE            infer | known (default: infer)
   --linker-seq AASEQ            Amino-acid linker sequence (required when --linker-mode known)
@@ -51,7 +48,7 @@ Optional:
   --help                        Show this help
 
 Environment overrides:
-  SEQ2SCFV_IMAGE_NAME, GERMLINE_DIR, IG_SEQTYPE, DOMAIN_SYSTEM
+  IG_SEQTYPE, DOMAIN_SYSTEM
 EOF
 }
 
@@ -59,10 +56,12 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --input-preprocessed)
       INPUT_PREPROCESSED="$2"; shift 2 ;;
-    --run-name)
-      RUN_NAME="$2"; shift 2 ;;
-    --runs-dir)
-      RUNS_DIR="$2"; shift 2 ;;
+    --output-dir)
+      RUN_DIR="$2"; shift 2 ;;
+    --germlines)
+      GERMLINE_DIR="$2"; shift 2 ;;
+    --image)
+      IMAGE_NAME="$2"; shift 2 ;;
     --threads|--cpus)
       THREADS="$2"; shift 2 ;;
     --linker-mode)
@@ -94,6 +93,10 @@ if [[ -z "${INPUT_PREPROCESSED}" ]]; then
   echo "ERROR: --input-preprocessed is required." >&2
   exit 1
 fi
+if [[ -z "${RUN_DIR}" || -z "${GERMLINE_DIR}" ]]; then
+  echo "ERROR: --output-dir and --germlines are required." >&2
+  exit 1
+fi
 if [[ ! -d "${INPUT_PREPROCESSED}" ]]; then
   echo "ERROR: Input directory not found: ${INPUT_PREPROCESSED}" >&2
   exit 1
@@ -114,11 +117,7 @@ fi
 # Normalize host paths for Docker mounts.
 INPUT_PREPROCESSED="$(realpath "${INPUT_PREPROCESSED}")"
 GERMLINE_DIR="$(realpath "${GERMLINE_DIR}")"
-if [[ -z "${RUNS_DIR}" ]]; then
-  RUNS_DIR="${ROOT_DIR}/runs"
-fi
-mkdir -p "${RUNS_DIR}"
-RUNS_DIR="$(realpath "${RUNS_DIR}")"
+RUN_DIR="$(realpath -m "${RUN_DIR}")"
 
 mapfile -t FASTA_FILES < <(find "${INPUT_PREPROCESSED}" -maxdepth 1 -type f -name '*.fasta' ! -name '*.tmp.fasta' | sort)
 if [[ ${#FASTA_FILES[@]} -eq 0 ]]; then
@@ -129,13 +128,13 @@ fi
 if [[ ! -f "${GERMLINE_DIR}/${GERMLINE_V_DB}" || ! -f "${GERMLINE_DIR}/${GERMLINE_D_DB}" || ! -f "${GERMLINE_DIR}/${GERMLINE_J_DB}" || ! -f "${GERMLINE_DIR}/${GERMLINE_AUX}" ]]; then
   echo "ERROR: Missing germline files in ${GERMLINE_DIR}." >&2
   echo "Required: ${GERMLINE_V_DB}, ${GERMLINE_D_DB}, ${GERMLINE_J_DB}, ${GERMLINE_AUX}" >&2
-  echo "Run: bash scfv_analysis/setup/setup_annotation.sh" >&2
+  echo "Run: bash steps/00_download/get_tools.sh" >&2
   exit 1
 fi
 
 if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
   echo "ERROR: Docker image '${IMAGE_NAME}' not found." >&2
-  echo "Run: bash scfv_analysis/setup/setup_annotation.sh" >&2
+  echo "Run: bash steps/00_download/get_tools.sh" >&2
   exit 1
 fi
 
@@ -145,11 +144,6 @@ if [[ ! -d "${IGBLAST_INTERNAL_DATA_DIR}" ]]; then
   exit 1
 fi
 
-if [[ -z "${RUN_NAME}" ]]; then
-  RUN_NAME="run_$(date +%Y%m%d_%H%M%S)"
-fi
-
-RUN_DIR="${RUNS_DIR}/${RUN_NAME}"
 if [[ -e "${RUN_DIR}" ]]; then
   if [[ "${FORCE}" == "1" ]]; then
     rm -rf "${RUN_DIR}"
@@ -180,7 +174,7 @@ if [[ "${LINKER_MODE}" == "known" ]]; then
 fi
 
 cat > "${RUN_DIR}/run_config.env" <<EOF
-RUN_NAME=${RUN_NAME}
+RUN_DIR=${RUN_DIR}
 INPUT_PREPROCESSED=${INPUT_PREPROCESSED}
 IMAGE_NAME=${IMAGE_NAME}
 GERMLINE_DIR=${GERMLINE_DIR}
@@ -208,6 +202,8 @@ echo "[2/7] Catalog: SEGUID + merge + dedup"
 cd /work/2.Catalogued
 shopt -s nullglob
 for fasta in /input/*.fasta; do
+  # unoriented copies left by preprocessing must not be annotated as extra libraries
+  [[ "$fasta" == *.tmp.fasta ]] && continue
   base="$(basename "$fasta" .fasta)"
   uniq_id.py "$base" "$fasta"
 done

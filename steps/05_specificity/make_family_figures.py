@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate two parallel 4-panel figures for email reply.
+"""Generate two parallel 4-panel figures (figures 1 and 2).
 
 Figure 1: R4 H460 PCNB-specific candidates (8,878 sequences)
 Figure 2: All rounds / all targets (182,345 sequences)
@@ -27,8 +27,8 @@ from common import kmer_matrix, similarity_heatmap_label, similarity_heatmap_lim
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Build two parallel 4-panel email figures.")
-    p.add_argument("--allseq-dir", required=True, help="Path to allseq_email run dir")
+    p = argparse.ArgumentParser(description="Build two parallel 4-panel figures.")
+    p.add_argument("--allseq-dir", required=True, help="Output dir of r4_h460pcnb_families.py")
     p.add_argument("--allrounds-dir", required=True, help="Path to allrounds run dir")
     p.add_argument("--outdir", required=True, help="Output directory for figures")
     return p.parse_args()

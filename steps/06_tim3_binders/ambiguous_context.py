@@ -20,20 +20,15 @@ try:
     import edlib
 except ImportError as exc:  # pragma: no cover
     raise SystemExit(
-        "Missing dependency: edlib. Run with "
-        "PYTHONPATH=/tmp/tim3_match_deps after installing edlib there."
+        "Missing dependency: edlib. Use the Python environment from envs/python.yml."
     ) from exc
 
 
-ROOT = Path("/homes/dtzim01/lucsib")
-SANGER_TSV = ROOT / "TIM-3_sequences_binding.tsv"
-COUNTS_TSV = (
-    ROOT
-    / "scfv_analysis/runs/run_20260219_053754/7.Counts/"
-    / "in_frame_igBLAST_paired_delim_linker_scored_flags_counts.tsv"
-)
-LABELS_TSV = ROOT / "analysis/tim3_sanger_cutoff/tim3_conservative_labels.tsv"
-OUT_DIR = ROOT / "analysis/tim3_sanger_cutoff"
+# Set from the command line in main()
+SANGER_TSV: Path
+COUNTS_TSV: Path
+LABELS_TSV: Path
+OUT_DIR: Path
 
 DNA_COMP = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 CIGAR_RE = re.compile(r"(\d+)([=XID])")
@@ -87,8 +82,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-prefix",
         default="tim3_ambiguous_full_context_minreads",
-        help="Output filename prefix under analysis/tim3_sanger_cutoff.",
+        help="Output filename prefix under --out-dir.",
     )
+    parser.add_argument("--sanger-tsv", type=Path, required=True)
+    parser.add_argument("--counts-tsv", type=Path, required=True, help="step-03 counts table")
+    parser.add_argument("--labels-tsv", type=Path, required=True, help="tim3_conservative_labels.tsv")
+    parser.add_argument("--out-dir", type=Path, required=True)
     return parser.parse_args()
 
 
@@ -180,7 +179,9 @@ def call_by_delta(delta: float, margin: float) -> str:
 
 
 def main() -> None:
+    global SANGER_TSV, COUNTS_TSV, LABELS_TSV, OUT_DIR
     args = parse_args()
+    SANGER_TSV, COUNTS_TSV, LABELS_TSV, OUT_DIR = args.sanger_tsv, args.counts_tsv, args.labels_tsv, args.out_dir
     sanger = load_sanger()
     labels = load_ambiguous_labels(args.min_reads)
     aggregates = {
@@ -306,8 +307,42 @@ def main() -> None:
         + "\n"
     )
 
+    # Final labels: the first-pass label, except that ambiguous clones whose full-read context
+    # favours the binding Sanger clone at the 0.5 margin become bind_context.
+    context_rows = {row["nt_scfv_id"]: row for row in rows}
+    first_pass_confidence = {"bind": "first_pass", "no_bind": "first_pass", "ambiguous": "ambiguous", "unknown": "unknown"}
+    with LABELS_TSV.open() as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        label_fields = list(reader.fieldnames) + [
+            "final_label_margin05_context",
+            "full_context_mean_delta_yes_minus_no",
+            "confidence",
+        ]
+        final_rows = []
+        for row in reader:
+            context = context_rows.get(row["nt_scfv_id"])
+            if context is None:
+                row["final_label_margin05_context"] = row["assigned_label"]
+                row["full_context_mean_delta_yes_minus_no"] = ""
+                row["confidence"] = first_pass_confidence[row["assigned_label"]]
+            elif context["margin05_dominant_call"] == "bind":
+                row["final_label_margin05_context"] = "bind_context"
+                row["full_context_mean_delta_yes_minus_no"] = context["mean_full_identity_delta_yes_minus_no"]
+                row["confidence"] = "context_tentative_margin05"
+            else:
+                row["final_label_margin05_context"] = row["assigned_label"]
+                row["full_context_mean_delta_yes_minus_no"] = context["mean_full_identity_delta_yes_minus_no"]
+                row["confidence"] = "ambiguous_after_context"
+            final_rows.append(row)
+    out_labels = OUT_DIR / f"tim3_labels_with_full_context_minreads{args.min_reads}.tsv"
+    with out_labels.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=label_fields, delimiter="\t")
+        writer.writeheader()
+        writer.writerows(final_rows)
+
     print(f"Wrote {out_tsv}", flush=True)
     print(f"Wrote {out_summary}", flush=True)
+    print(f"Wrote {out_labels}", flush=True)
 
 
 if __name__ == "__main__":

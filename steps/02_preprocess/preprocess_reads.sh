@@ -2,18 +2,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-PROJECT_DIR="$(cd "${ROOT_DIR}/.." && pwd)"
 
-READS_DIR=${READS_DIR:-"${PROJECT_DIR}/qc/qc_results/2_filtered/reads"}
-OUT_DIR=${OUT_DIR:-"${ROOT_DIR}/preprocess_output"}
+# Set by run_preprocess.sh
+READS_DIR=${READS_DIR:?}
+OUT_DIR=${OUT_DIR:?}
 MIN_LEN=${MIN_LEN:-0}
 MAX_LEN=${MAX_LEN:-0}
 ORIENT=${ORIENT:-"none"}  # none | rc | anchor | igblast
 ANCHOR=${ANCHOR:-""}
 THREADS=${THREADS:-8}
 SEQ2SCFV_IMAGE_NAME=${SEQ2SCFV_IMAGE_NAME:-"seq2scfv"}
-GERMLINE_DIR=${GERMLINE_DIR:-"${ROOT_DIR}/germlines/dog"}
+GERMLINE_DIR=${GERMLINE_DIR:?}
 ORGANISM="dog"
 IG_SEQTYPE=${IG_SEQTYPE:-"Ig"}
 DOMAIN_SYSTEM=${DOMAIN_SYSTEM:-"imgt"}
@@ -24,13 +23,13 @@ GERMLINE_AUX="optional_file/dog_gl.aux"
 KEEP_IGBLAST=${KEEP_IGBLAST:-0}
 FORCE=${FORCE:-0}
 
-to_container_path() {
-  local p
-  p="$(realpath "$1")"
-  echo "/work/${p#${ROOT_DIR}/}"
-}
-
 mkdir -p "${OUT_DIR}"
+OUT_DIR="$(realpath "${OUT_DIR}")"
+
+# OUT_DIR is mounted as /work in the container
+to_container_path() {
+  echo "/work/$(basename "$1")"
+}
 
 if [ "${ORIENT}" = "igblast" ]; then
   GERMLINE_DIR="$(realpath "${GERMLINE_DIR}")"
@@ -71,7 +70,8 @@ for fastq in "${READS_DIR}"/*.fastq; do
       --orient none
 
     docker run --rm \
-      -v "${ROOT_DIR}:/work" \
+      --user "$(id -u):$(id -g)" \
+      -v "${OUT_DIR}:/work" \
       -v "${GERMLINE_DIR}:/germ:ro" \
       -v "${IGBLAST_INTERNAL_DATA_DIR}:/igblast/ncbi-igblast-1.20.0/internal_data/dog:ro" \
       -w /work \

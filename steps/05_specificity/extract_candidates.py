@@ -16,8 +16,8 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Extract candidate nt_scFv sequences.")
     p.add_argument(
         "--input-csv",
-        default="r_output/tables/filt_df.csv",
-        help="Input table with nt_scFv and barcode columns.",
+        required=True,
+        help="Input table with nt_scFv and barcode columns (filt_df.csv from step 04).",
     )
     p.add_argument("--present-col", default="barcode09", help="Column that must be > 0")
     p.add_argument("--absent-col", default="barcode12", help="Column that must be == 0")

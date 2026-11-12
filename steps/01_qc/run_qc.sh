@@ -2,7 +2,7 @@
 set -e
 set -o pipefail
 
-IMAGE_NAME="nanopore-qc"
+IMAGE_NAME="${QC_IMAGE:-lucsib-scfv-qc}"
 
 THREADS="${THREADS:-64}"
 JOBS="${JOBS:-1}"
@@ -12,15 +12,18 @@ CLEAN_FASTQ="${CLEAN_FASTQ:-1}"
 
 usage() {
     cat <<'EOF'
-Usage: bash qc/run_pipeline.sh [options]
+Usage: bash steps/01_qc/run_qc.sh --input <dir> --output <dir> [options]
 
 Options:
   --input <dir>    Input directory containing *.fastq files
+  --output <dir>   Output directory for QC results
   --cpus <n>       Number of CPU threads to use (maps to THREADS)
+  --jobs <n>       Number of samples processed in parallel (maps to JOBS)
+  --image <name>   QC Docker image (built by steps/00_download/get_tools.sh)
   --help           Show this help message
 
 Environment overrides (optional):
-  READS_DIR, THREADS, JOBS, MIN_LENGTH, KEEP_PERCENT, CLEAN_FASTQ, QC_OUT_DIR
+  MIN_LENGTH, KEEP_PERCENT, CLEAN_FASTQ
 EOF
 }
 
@@ -32,6 +35,18 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             READS_DIR="$2"
+            shift 2
+            ;;
+        --output)
+            QC_OUT_DIR="$2"
+            shift 2
+            ;;
+        --jobs)
+            JOBS="$2"
+            shift 2
+            ;;
+        --image)
+            IMAGE_NAME="$2"
             shift 2
             ;;
         --cpus|--threads)
@@ -64,8 +79,9 @@ if [ -f /.dockerenv ]; then
 else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    if [ -z "${READS_DIR:-}" ]; then
-        READS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)/reads"
+    if [ -z "${READS_DIR:-}" ] || [ -z "${QC_OUT_DIR:-}" ]; then
+        usage >&2
+        exit 1
     fi
 
     if [ ! -d "${READS_DIR}" ]; then
@@ -75,7 +91,7 @@ else
     fi
     READS_DIR="$(realpath "${READS_DIR}")"
 
-    OUT_HOST="${QC_OUT_DIR:-${SCRIPT_DIR}/qc_results}"
+    OUT_HOST="${QC_OUT_DIR}"
     mkdir -p "${OUT_HOST}"
 
     echo "Input: ${READS_DIR}"
@@ -90,7 +106,7 @@ else
         -e CLEAN_FASTQ \
         -v "${READS_DIR}:/data/reads:ro" \
         -v "${OUT_HOST}:/data/qc_results" \
-        -v "${SCRIPT_DIR}/run_pipeline.sh:/opt/pipeline/run_pipeline.sh:ro" \
+        -v "${SCRIPT_DIR}/run_qc.sh:/opt/pipeline/run_pipeline.sh:ro" \
         "$IMAGE_NAME" \
         bash /opt/pipeline/run_pipeline.sh
 fi

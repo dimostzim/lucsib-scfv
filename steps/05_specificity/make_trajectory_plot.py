@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone trajectory plot for email attachment."""
+"""Standalone target trajectory plot (figure 3)."""
 
 from __future__ import annotations
 

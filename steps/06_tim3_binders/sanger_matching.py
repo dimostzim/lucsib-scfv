@@ -8,6 +8,7 @@ It uses edlib for fast semi-global edit-distance alignment.
 
 from __future__ import annotations
 
+import argparse
 import csv
 import itertools
 import re
@@ -21,21 +22,15 @@ try:
     import edlib
 except ImportError as exc:  # pragma: no cover - environment check
     raise SystemExit(
-        "Missing dependency: edlib. Install/run with: "
-        "python -m pip install --target /tmp/tim3_match_deps edlib && "
-        "PYTHONPATH=/tmp/tim3_match_deps python analysis/tim3_sanger_cutoff_analysis.py"
+        "Missing dependency: edlib. Use the Python environment from envs/python.yml."
     ) from exc
 
 
-ROOT = Path("/homes/dtzim01/lucsib")
-SANGER_TSV = ROOT / "TIM-3_sequences_binding.tsv"
-COUNTS_TSV = (
-    ROOT
-    / "scfv_analysis/runs/run_20260219_053754/7.Counts/"
-    / "in_frame_igBLAST_paired_delim_linker_scored_flags_counts.tsv"
-)
-OUT_DIR = ROOT / "analysis/tim3_sanger_cutoff"
-COLLAPSED_TSV = OUT_DIR / "tim3_nanopore_nt_scfv_collapsed.tsv"
+# Set from the command line in main()
+SANGER_TSV: Path
+COUNTS_TSV: Path
+OUT_DIR: Path
+COLLAPSED_TSV: Path
 TIM3_BARCODES = ("barcode02", "barcode03")
 KMER_SIZE = 15
 MIN_SHARED_KMERS = 3
@@ -639,6 +634,15 @@ def write_summary(
 
 
 def main() -> None:
+    global SANGER_TSV, COUNTS_TSV, OUT_DIR, COLLAPSED_TSV
+    parser = argparse.ArgumentParser(description="Match TIM-3 Nanopore scFvs to the Sanger bind/no-bind clones.")
+    parser.add_argument("--sanger-tsv", type=Path, required=True)
+    parser.add_argument("--counts-tsv", type=Path, required=True, help="step-03 counts table")
+    parser.add_argument("--out-dir", type=Path, required=True)
+    args = parser.parse_args()
+    SANGER_TSV, COUNTS_TSV, OUT_DIR = args.sanger_tsv, args.counts_tsv, args.out_dir
+    COLLAPSED_TSV = OUT_DIR / "tim3_nanopore_nt_scfv_collapsed.tsv"
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     refs = load_sanger_refs()
     clones = load_tim3_np_clones()

@@ -10,14 +10,15 @@ representative-only FASTA per selected threshold.
 
 from __future__ import annotations
 
+import argparse
 import csv
 from pathlib import Path
 from typing import Iterable
 
 
-ROOT = Path("/homes/dtzim01/lucsib")
-SWEEP_DIR = ROOT / "analysis/tim3_sanger_cutoff/final_exports/diversity_sweep"
-OUT_DIR = ROOT / "analysis/tim3_sanger_cutoff/final_exports/tim3_diverse_representative_sets_20260613"
+# Set from the command line in main()
+SWEEP_DIR: Path
+OUT_DIR: Path
 
 SELECTED_EXPORTS = (
     ("protein", "95", "95%"),
@@ -32,7 +33,7 @@ def read_tsv(path: Path) -> list[dict[str, str]]:
         raise SystemExit(
             f"Missing required input: {path}\n"
             "Regenerate sweep inputs with: "
-            "PYTHONPATH=/tmp/tim3_match_deps python analysis/tim3_abundance_diversity_sweep.py"
+            "steps/06_tim3_binders/diversity_sweep.py"
         )
     with path.open() as handle:
         return list(csv.DictReader(handle, delimiter="\t"))
@@ -267,35 +268,14 @@ def write_readme(exports: list[dict[str, str]], summary: dict[tuple[str, str], d
     (OUT_DIR / "README.md").write_text("\n".join(lines))
 
 
-def write_email(exports: list[dict[str, str]]) -> None:
-    by_key = {(row["mode"], row["threshold_label"]): row for row in exports}
-    text = f"""Subject: TIM-3 abundance-diverse representative scFv sets
-
-Hi all,
-
-I generated the TIM-3 abundance-diverse scFv representative sets we discussed.
-
-The starting point was the conservative strict-binder set from the Nanopore/Sanger comparison. Briefly, each extracted Nanopore scFv nucleotide sequence was globally aligned against the Sanger-validated TIM-3 bind/no-bind sequences. For this export I used only the high-confidence strict binders, where the scFv-level evidence supported binding without a conflicting no-bind match. I did not include the context-resolved probable binders in these representative sets.
-
-The representative-selection method is abundance-first nonredundant selection. In protein mode, identical amino-acid scFv sequences are collapsed and their nucleotide-variant reads are summed. In DNA mode, each nucleotide scFv sequence is treated separately. Within each mode, candidates are ranked by total TIM-3 read abundance, then selected greedily only if they are below the identity cutoff to all previously selected higher-abundance representatives. Global sequence identity was computed from global alignments.
-
-After selecting representatives, I assigned every candidate sequence to its nearest selected representative. The TSVs are therefore clustered candidate tables: each row has the candidate sequence, read counts, whether it is the representative, its identity to the representative, and cluster-level summaries such as cluster size and total cluster reads. I also included representative-only FASTA files for the same sets.
-
-The output sets are:
-Protein 95%: {by_key[("protein", "95")]["representatives"]} representatives from {by_key[("protein", "95")]["rows"]} protein candidates.
-Protein 96%: {by_key[("protein", "96")]["representatives"]} representatives from {by_key[("protein", "96")]["rows"]} protein candidates.
-Protein 97%: {by_key[("protein", "97")]["representatives"]} representatives from {by_key[("protein", "97")]["rows"]} protein candidates.
-DNA 99%: {by_key[("dna", "99")]["representatives"]} representatives from {by_key[("dna", "99")]["rows"]} nucleotide candidates.
-
-For each set there is one TSV with all cluster assignments and one representative-only FASTA.
-
-Best,
-Dimos
-"""
-    (OUT_DIR / "email_draft_general_tim3_diverse_sets.txt").write_text(text)
-
-
 def main() -> None:
+    global SWEEP_DIR, OUT_DIR
+    parser = argparse.ArgumentParser(description="Export the selected TIM-3 representative sets.")
+    parser.add_argument("--sweep-dir", type=Path, required=True, help="output dir of diversity_sweep.py")
+    parser.add_argument("--out-dir", type=Path, required=True)
+    args = parser.parse_args()
+    SWEEP_DIR, OUT_DIR = args.sweep_dir, args.out_dir
+
     clean_output_dir()
     summary = load_summary()
     exports = [
@@ -303,7 +283,6 @@ def main() -> None:
         for mode, threshold_label, threshold_display in SELECTED_EXPORTS
     ]
     write_readme(exports, summary)
-    write_email(exports)
     for export in exports:
         print(
             f"{export['file']}: {export['rows']} rows, "

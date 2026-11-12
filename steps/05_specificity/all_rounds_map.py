@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""All-round/all-target sequence analysis and email-ready plots."""
+"""All-round/all-target sequence analysis and plots."""
 
 from __future__ import annotations
 
@@ -30,12 +30,12 @@ from common import (
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="All-sequence analysis across all mapped rounds/targets.")
-    p.add_argument("--input-csv", default="r_output/tables/filt_df.csv", help="Input filt_df CSV")
+    p.add_argument("--input-csv", required=True, help="Input filt_df CSV from step 04")
     p.add_argument("--outdir", required=True, help="Output directory")
     p.add_argument("--sequence-col", default="nt_scFv", help="Sequence column")
     p.add_argument(
         "--barcode-map",
-        default="/homes/dtzim01/lucsib/barcode_map.csv",
+        required=True,
         help="Barcode map CSV with columns Sample,Pool,Round,Barcode",
     )
     p.add_argument("--kmer", type=int, default=4, help="k-mer size for scalable full-set embedding")

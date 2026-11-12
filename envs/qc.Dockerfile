@@ -15,19 +15,16 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     no_proxy=${no_proxy}
 
 RUN mamba create -n nanopore_qc -c bioconda -c conda-forge \
-    nanoplot \
-    porechop \
-    filtlong \
-    multiqc \
-    seqkit \
+    nanoplot=1.48.0 \
+    porechop=0.2.4 \
+    filtlong=0.3.1 \
+    multiqc=1.25.1 \
+    seqkit=2.14.0 \
     -y && \
     mamba clean --all -y
 
 ENV PATH="/opt/conda/envs/nanopore_qc/bin:$PATH"
 
 WORKDIR /data
-
-COPY qc/run_pipeline.sh /opt/pipeline/run_pipeline.sh
-RUN chmod +x /opt/pipeline/run_pipeline.sh
 
 CMD ["bash"]

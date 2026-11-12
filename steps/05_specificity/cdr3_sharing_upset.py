@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Publication-ready UpSet plot of shared scFv CDR3 pairs across barcodes 07-12."""
 
+import argparse
 from pathlib import Path
 import re
 
@@ -27,19 +28,11 @@ def _normalize_barcode_key(value: str) -> str:
     return f"barcode{int(match.group(1))}"
 
 
-def _load_barcode_labels() -> dict[str, str]:
-    """Load pretty labels for barcode columns from barcode_map.csv."""
-    candidate_paths = [
-        Path(__file__).resolve().parents[2] / "barcode_map.csv",
-        Path("barcode_map.csv"),
-    ]
-    map_path = next((p for p in candidate_paths if p.exists()), None)
-    if map_path is None:
-        return {col: col for col in BARCODE_COLS}
-
+def _load_barcode_labels(map_path: Path) -> dict[str, str]:
+    """Load pretty labels for barcode columns from the sample sheet."""
     barcode_map = pd.read_csv(map_path)
     if not {"Sample", "Pool", "Round", "Barcode"}.issubset(barcode_map.columns):
-        return {col: col for col in BARCODE_COLS}
+        raise SystemExit(f"{map_path} needs columns Sample, Pool, Round, Barcode")
 
     lookup = {}
     for _, row in barcode_map.iterrows():
@@ -168,11 +161,17 @@ def _configure_style() -> None:
 
 
 def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("--cdr3-csv", type=Path, required=True, help="CDR3 pair count table from step 04 (CDR3s.csv)")
+    p.add_argument("--samples-csv", type=Path, required=True, help="Sample sheet with Sample, Pool, Round, Barcode")
+    p.add_argument("--out-dir", type=Path, required=True)
+    args = p.parse_args()
+
     _patch_upsetplot_matrix_for_modern_pandas()
     _configure_style()
 
-    df = pd.read_csv("r_output/tables/CDR3s.csv")
-    label_map = _load_barcode_labels()
+    df = pd.read_csv(args.cdr3_csv)
+    label_map = _load_barcode_labels(args.samples_csv)
     presence_raw = (df[BARCODE_COLS] > 0)
     presence_raw = presence_raw.loc[presence_raw.any(axis=1)].copy()
     presence = presence_raw.rename(columns=label_map)
@@ -244,7 +243,7 @@ def main() -> None:
     )
     fig.subplots_adjust(left=0.08, right=0.98, top=0.90, bottom=0.08)
 
-    out_dir = Path("r_output/cooccurence")
+    out_dir = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     out_png = out_dir / "upset_CDR3s_barcodes7_12.png"
     out_pdf = out_dir / "upset_CDR3s_barcodes7_12.pdf"

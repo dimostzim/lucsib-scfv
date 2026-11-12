@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import textwrap
 from collections import Counter, defaultdict
@@ -10,14 +11,13 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
 
-ROOT = Path("/homes/dtzim01/lucsib")
-ANALYSIS_DIR = ROOT / "analysis/tim3_sanger_cutoff"
-LABELS_TSV = ANALYSIS_DIR / "tim3_labels_with_full_context_minreads10.tsv"
-COLLAPSED_TSV = ANALYSIS_DIR / "tim3_nanopore_nt_scfv_collapsed.tsv"
-SANGER_PAIRS_TSV = ANALYSIS_DIR / "tim3_sanger_vs_sanger.tsv"
-SANGER_TSV = ROOT / "TIM-3_sequences_binding.tsv"
-OUT_DIR = ANALYSIS_DIR / "final_exports"
-FASTA_DIR = OUT_DIR / "fasta"
+# Set from the command line in main()
+LABELS_TSV: Path
+COLLAPSED_TSV: Path
+SANGER_PAIRS_TSV: Path
+SANGER_TSV: Path
+OUT_DIR: Path
+FASTA_DIR: Path
 
 DIRECT_LABELS = ("bind", "bind_context", "no_bind", "ambiguous", "unknown")
 FASTA_LABELS = ("bind", "bind_context", "no_bind")
@@ -220,6 +220,26 @@ def make_label_matrix(rows: Sequence[dict]) -> List[dict]:
     return output
 
 
+def make_full_table(rows: Sequence[dict]) -> List[dict]:
+    # One row per nt_scFv with its final label and sequences; input of diversity_sweep.py.
+    return [
+        {
+            "nt_scfv_id": row["nt_scfv_id"],
+            "aa_scfv_id": row["aa_scfv_id"],
+            "final_label": row["final_label_margin05_context"],
+            "confidence": row["confidence"],
+            "total_tim3_reads": row["tim3_reads"],
+            "barcode02_tim3_round3_reads": row["barcode02"],
+            "barcode03_tim3_round4_reads": row["barcode03"],
+            "best_yes_sanger_clone": row["best_yes_clone"],
+            "best_no_sanger_clone": row["best_no_clone"],
+            "nt_scfv_sequence": row["nt_scfv"],
+            "aa_scfv_sequence": row["aa_scfv"],
+        }
+        for row in rows
+    ]
+
+
 def write_exports(rows: Sequence[dict]) -> Dict[str, int]:
     counts = {}
     by_label = defaultdict(list)
@@ -315,6 +335,18 @@ Top conflicts:
 
 
 def main() -> None:
+    global LABELS_TSV, COLLAPSED_TSV, SANGER_PAIRS_TSV, SANGER_TSV, OUT_DIR, FASTA_DIR
+    parser = argparse.ArgumentParser(description="TIM-3 label report and FASTA exports.")
+    parser.add_argument("--analysis-dir", type=Path, required=True, help="output dir of the matching steps")
+    parser.add_argument("--sanger-tsv", type=Path, required=True)
+    parser.add_argument("--out-dir", type=Path, required=True)
+    args = parser.parse_args()
+    LABELS_TSV = args.analysis_dir / "tim3_labels_with_full_context_minreads10.tsv"
+    COLLAPSED_TSV = args.analysis_dir / "tim3_nanopore_nt_scfv_collapsed.tsv"
+    SANGER_PAIRS_TSV = args.analysis_dir / "tim3_sanger_vs_sanger.tsv"
+    SANGER_TSV, OUT_DIR = args.sanger_tsv, args.out_dir
+    FASTA_DIR = OUT_DIR / "fasta"
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     FASTA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -329,6 +361,7 @@ def main() -> None:
     write_tsv(OUT_DIR / "top_clones_by_label.tsv", top_rows)
     write_tsv(OUT_DIR / "sanger_conflict_audit.tsv", conflicts)
     write_tsv(OUT_DIR / "label_matrix_for_plotting.tsv", label_matrix)
+    write_tsv(OUT_DIR / "tim3_full_labeled_scfv_results_with_sequences.tsv", make_full_table(rows))
     write_report(summary, top_rows, conflicts, fasta_counts)
 
     print(f"Wrote final TIM-3 exports to {OUT_DIR}")

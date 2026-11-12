@@ -69,7 +69,10 @@ COPY install2.r /usr/bin/install2.r
 RUN mkdir /home/seq2scfv
 
 # changed to download my custom repo, not OG, in case I develop script mods
-RUN git clone https://github.com/MikolajKocikowski/seq2scfv-unofficial-updated.git /home/seq2scfv
+# lucsib-scfv: pinned to the commit used for the analysis (set by steps/00_download/get_tools.sh)
+ARG SEQ2SCFV_REPO=https://github.com/MikolajKocikowski/seq2scfv-unofficial-updated.git
+ARG SEQ2SCFV_COMMIT
+RUN git clone ${SEQ2SCFV_REPO} /home/seq2scfv && git -C /home/seq2scfv checkout ${SEQ2SCFV_COMMIT}
 RUN cp /home/seq2scfv/bin/* /usr/local/bin/
 RUN chmod +x /usr/local/bin/*
 

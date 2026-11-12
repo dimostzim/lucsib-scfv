@@ -12,6 +12,7 @@ selected higher-abundance candidates.
 
 from __future__ import annotations
 
+import argparse
 import csv
 import statistics
 from dataclasses import dataclass, field
@@ -22,14 +23,13 @@ try:
     import edlib
 except ImportError as exc:  # pragma: no cover
     raise SystemExit(
-        "Missing dependency: edlib. Run with: "
-        "PYTHONPATH=/tmp/tim3_match_deps python analysis/tim3_abundance_diversity_sweep.py"
+        "Missing dependency: edlib. Use the Python environment from envs/python.yml."
     ) from exc
 
 
-ROOT = Path("/homes/dtzim01/lucsib")
-INPUT_TSV = ROOT / "analysis/tim3_sanger_cutoff/final_exports/tim3_full_labeled_scfv_results_with_sequences.tsv"
-OUT_DIR = ROOT / "analysis/tim3_sanger_cutoff/final_exports/diversity_sweep"
+# Set from the command line in main()
+INPUT_TSV: Path
+OUT_DIR: Path
 THRESHOLDS = (99.0, 98.0, 97.0, 96.0, 95.0)
 TOP_N = 100
 
@@ -471,6 +471,14 @@ def write_readme(summary_rows: Sequence[dict]) -> None:
 
 
 def main() -> None:
+    global INPUT_TSV, OUT_DIR
+    parser = argparse.ArgumentParser(description="Abundance-first diversity sweep of TIM-3 strict binders.")
+    parser.add_argument("--input-tsv", type=Path, required=True,
+                        help="tim3_full_labeled_scfv_results_with_sequences.tsv")
+    parser.add_argument("--out-dir", type=Path, required=True)
+    args = parser.parse_args()
+    INPUT_TSV, OUT_DIR = args.input_tsv, args.out_dir
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     rows = load_strict_binder_rows()
     modes = {
