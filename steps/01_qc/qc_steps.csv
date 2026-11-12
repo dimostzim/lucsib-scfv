@@ -1,0 +1,9 @@
+stage,name,tool,action,parameters,dropped_reads
+0,Cleaning,Python (inline),Validate FASTQ format,sequence length must equal quality length,Malformed reads where seq/qual lengths differ
+0,Cleaning,NanoPlot,Generate QC report,--plots dot,None
+1,Trimming,Porechop,Remove adapters,--discard_middle,Reads with middle adapters (chimeras)
+1,Trimming,NanoPlot,Generate QC report,--plots dot,None
+2,Filtering,Filtlong,Filter by length,--min_length 1000,Reads shorter than 1000bp
+2,Filtering,Filtlong,Filter by quality,--keep_percent 90,Bottom 10% by quality score
+2,Filtering,NanoPlot,Generate QC report,--plots dot,None
+3,Reporting,MultiQC,Aggregate all NanoPlot reports,--force,None

@@ -1,0 +1,1608 @@
+---
+title: "scfv_analysis"
+author: "Mikolaj Kocikowski"
+date: "2026-01-20"
+output: html_document
+---
+
+
+```{r preparing-the-environment}
+
+# GLOBAL PARAMETERS
+
+# Required packages
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(circlize)
+library(viridis)
+library(corrplot)
+library(reshape2)
+library(ggalluvial)
+library(ggpubr)
+library(pheatmap)
+library(tibble)
+library(uwot)
+library(svglite)
+library(readr)
+
+
+# Sample names to be analyzed (one per line in file) - must match colnames in df
+sample_cols <- readLines("scfv_extraction_output/focus_libs.txt")
+
+# Manual reordering to have naive library controls moved to the front (if present)
+priority <- intersect(c("OG_LIB", "NEW_LIB"), sample_cols)
+sample_cols <- c(priority, setdiff(sample_cols, priority))
+
+# manual samples
+# sample_cols <- c("COV_S1_R1", "COV_S1_R2", "COV_S1_R3", "COV_S1_R4")
+
+# Grouping vector - same length as sample_cols - for grouping samples - not in use currently
+# grouping_vector <- c("A", "A", "B", "B")
+
+# Inferred linker - used for scfv space mapping - assumed constant for all scFvs
+SCFV_LINKER_AA <- "EGKSSGASGESKVDDA"
+
+# Create directories for output
+OUTPUT_DIRS <- c(
+  "r_output/alluvial",
+  "r_output/barplots",
+  "r_output/chords",
+  "r_output/cooccurence",
+  "r_output/diversity",
+  "r_output/spaces",
+  "r_output/tables"
+)
+
+for (d in OUTPUT_DIRS) {
+  if (!dir.exists(d)) {
+    dir.create(d, recursive = TRUE)
+  }
+}
+
+
+```
+
+
+```{r loading-raw-data}
+
+# Load Seq2scFv output & library names
+seq2scFv_output <- "scfv_extraction_output/in_frame_igBLAST_paired_delim_linker_scored_flags_counts.tsv"
+libs <- "scfv_extraction_output/focus_libs.txt"
+
+df <- read.table(
+  seq2scFv_output,
+  fill = TRUE,
+  header = TRUE,
+  sep = "\t",
+  row.names = NULL
+)
+
+focus_libs <- read.table(libs)$V1
+
+# Keep only libraries that are present in the loaded table.
+missing_focus <- setdiff(focus_libs, colnames(df))
+if (length(missing_focus) > 0) {
+  warning("Dropping missing libraries from focus list: ", paste(missing_focus, collapse = ", "))
+}
+focus_libs <- setdiff(focus_libs, missing_focus)
+
+missing_samples <- setdiff(sample_cols, colnames(df))
+if (length(missing_samples) > 0) {
+  warning("Dropping missing samples: ", paste(missing_samples, collapse = ", "))
+}
+sample_cols <- setdiff(sample_cols, missing_samples)
+
+if (length(focus_libs) == 0 || length(sample_cols) == 0) {
+  stop("No valid sample columns found in seq2scFv output.")
+}
+
+```
+
+
+```{r filtering-the-data}
+
+# Original (OG) filters with default settings - removing sequences with incorrect VH-VL order, bad linkers, NA in quality score 
+filt_df_og <- df[!is.na(df$total_nt_qual), ] %>%
+  filter(VH_IGH == 1,
+         score_pcnt >= 75,
+         mismatches <= 2,
+         linker_overhang <= 10)
+
+# some sequences with empty VH_cdr3_aa or VL_cdr3_aa slipped through the cracks; while potentially valid they can't be analyzed here
+filt_df <- filt_df_og %>%
+  filter(
+    VH_cdr3_aa != "",
+    VL_cdr3_aa != ""
+  )
+
+```
+
+
+```{r collapsing-the-sequences}
+
+# Collapse the sequences based on identical VH & VL (aa level)
+VH_VL <- filt_df %>%
+  group_by(VH_sequence_alignment_aa, VL_sequence_alignment_aa) %>%
+  summarise(across(focus_libs[1]:total_nt_qual, sum), .groups = "drop")
+
+# Collapse the sequences based on identical HCDR3 and LCDR3 (aa level)
+CDR3s <- filt_df %>%
+  group_by(VH_cdr3_aa, VL_cdr3_aa) %>%
+  summarise(across(focus_libs[1]:total_nt_qual, sum), .groups = "drop")
+
+# Collapse the sequences based on identical HCDR3 (aa level)
+HCDR3 <- filt_df %>%
+  group_by(VH_cdr3_aa) %>%
+  summarise(across(focus_libs[1]:total_nt_qual, sum), .groups = "drop")
+
+# Most entries appear only once even after collapsing; these are low-trust, since there is no enrichment process visible
+VH_VL_nonone <- VH_VL %>%
+  filter(total_nt_qual > 1)
+
+CDR3s_nonone <- CDR3s %>%
+  filter(total_nt_qual > 1)
+
+HCDR3_nonone <- HCDR3 %>%
+  filter(total_nt_qual > 1)
+
+```
+
+```{r saving-tables}
+
+write.csv(filt_df, "r_output/tables/filt_df.csv", row.names = FALSE)
+write.csv(VH_VL, "r_output/tables/VH_VL.csv", row.names = FALSE)
+write.csv(CDR3s, "r_output/tables/CDR3s.csv", row.names = FALSE)
+write.csv(HCDR3, "r_output/tables/HCDR3.csv", row.names = FALSE)
+write.csv(VH_VL_nonone, "r_output/tables/VH_VL_nonone.csv", row.names = FALSE)
+write.csv(CDR3s_nonone, "r_output/tables/CDR3s_nonone.csv", row.names = FALSE)
+write.csv(HCDR3_nonone, "r_output/tables/HCDR3_nonone.csv", row.names = FALSE)
+
+```
+
+
+```{r attrition-table-of-collapse}
+
+# building a table showing how many sequences are left after certain filtering and collapsing steps in R (attrition table)
+
+# store datasets and labels in a named list
+datasets <- list(
+  "Raw input data" = df,
+  "Default-filtered raw data" = filt_df_og,
+  "Non-empty HCDR3 and LCDR3" = filt_df,
+  "Collapsed by VH and VL sequences" = VH_VL,
+  "Collapsed by both CDR3s (VH and VL)" = CDR3s,
+  "Collapsed by HCDR3" = HCDR3,
+  "...VH & VL with total count > 1" = VH_VL_nonone,
+  "...CDR3s with total count > 1" = CDR3s_nonone,
+  "...HCDR3 with total count > 1" = HCDR3_nonone
+)
+
+# build attrition table
+attrition_table_r <- data.frame(
+  Step = names(datasets),
+  Rows = sapply(datasets, nrow),
+  row.names = NULL
+)
+
+# Export the table to CSV
+write.csv(attrition_table_r,
+          "r_output/tables/attrition_table_r.csv",
+          row.names = FALSE)
+
+attrition_table_r
+
+```
+
+
+```{r removing-dfs}
+
+# Remove dfs that are no longer needed to free up RAM
+rm(df)
+rm(filt_df_og)
+gc()
+```
+
+
+```{r merged-attrition-table}
+
+# merging the R attrition table with the one generated from seq2scfv output files
+
+# read TSV, skip first line (header)
+attr_1 <- read.table(
+  "scfv_extraction_output/attrition_table.tsv",
+  sep = "\t",
+  header = FALSE,
+  stringsAsFactors = FALSE,
+  skip = 1
+)
+
+# read CSV, skip first line (header) and second line (the same as last of the other table)
+attr_2 <- read.csv(
+  "r_output/tables/attrition_table_r.csv",
+  header = FALSE,
+  stringsAsFactors = FALSE,
+  skip = 2
+)
+
+# combine tables
+merged_attr <- rbind(attr_1, attr_2)
+
+# set new column names
+colnames(merged_attr) <- c("Stage", "Count")
+
+# Export the table to CSV
+write.csv(merged_attr,
+          "r_output/tables/attrition_merged.csv",
+          row.names = FALSE)
+
+# print the result
+merged_attr
+
+```
+
+
+```{r count-per-sample}
+
+# Create summary data frame
+summary_df <- data.frame(
+  Sample = sample_cols,
+  TotalCounts = colSums(VH_VL[, sample_cols]),
+  UniqueSCFVs = sapply(VH_VL[, sample_cols], function(x)
+    sum(x > 0))
+)
+
+summary_long <- summary_df %>%
+  pivot_longer(
+    cols = c(TotalCounts, UniqueSCFVs),
+    names_to = "Metric",
+    values_to = "Count"
+  )
+
+
+ggplot(summary_long, aes(
+  x = factor(Sample, levels = sample_cols),
+  y = Count,
+  fill = Metric
+)) +
+  geom_col(
+    position = position_dodge(width = 0.7),
+    width = 0.6,
+    color = "black"
+  ) +
+  scale_fill_manual(
+    values = c(
+      TotalCounts = "grey30",
+      UniqueSCFVs = "grey75"
+    ),
+    labels = c("Total counts", "Unique scFvs")
+  ) +
+  labs(title = "Total counts vs Unique scFvs per sample",
+       x = "",
+       y = "Counts",
+       fill = "") +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(
+      angle = 90,
+      hjust = 1, # modify if changing label angle
+      vjust = 0.5 # modify if changing label angle
+    ),
+    axis.line = element_line(linewidth = 0.8),
+    axis.ticks = element_line(linewidth = 0.8),
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+
+# Save the plot
+ggsave(filename = "r_output/barplots/scfv_counts.png",
+       plot = last_plot(),
+       dpi = 300)
+```
+Effective Shannon Diversity summarizes how many clones are present and how evenly they are represented, making it a good single-number measure of library collapse under selection. In other words it tells me whether my library is broad or dominated by a few clones. Compared to simple ratios, it is also robust to sequencing depth differences, which makes it useful for comparing panning rounds.
+
+```{r effectve-shannon-diversity}
+
+effective_shannon <- numeric(length(sample_cols))
+
+for (i in seq_along(sample_cols)) {
+  counts <- VH_VL[[sample_cols[i]]]
+  counts <- counts[counts > 0]
+  
+  p <- counts / sum(counts)
+  
+  # Shannon entropy
+  shannon <- -sum(p * log(p))
+  
+  # Effective Shannon diversity
+  effective_shannon[i] <- exp(shannon)
+}
+
+# Build tidy dataframe for plotting
+div_df <- tibble(Sample = sample_cols, Effective_Shannon = effective_shannon)
+
+ggplot(div_df, aes(
+  x = factor(Sample, levels = sample_cols),
+  y = Effective_Shannon)) +
+  geom_col(width = 0.6,
+           fill = "grey75",
+           color = "black") +
+  labs(title = "Effective Shannon diversity per sample", x = "", y = "Effective Shannon diversity") +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(
+      angle = 90,
+      hjust = 1, # modify if changing label angle
+      vjust = 0.5 # modify if changing label angle
+    ),
+    axis.line = element_line(size = 0.8),
+    axis.ticks = element_line(size = 0.8),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+# Save the plot
+ggsave(filename = "r_output/diversity/Shannon_diversity_per_sample.png",
+       plot = last_plot(),
+       dpi = 300)
+```
+
+
+```{r diversity-metrics}
+
+# prepare sample metadata. That could be easier if the samples always followed the same pattern, but controls don't
+# doing this manually also lets us rename Antigen labels to something more telling, if needed
+
+antigen_map <- tibble(
+  Sample = c(
+    "OG_LIB", "NEW_LIB",
+    "BA1.1_R1", "BA1.1_R2", "BA1.1_R3", "BA1.1_R4",
+    "BA5_R1", "BA5_R2", "BA5_R3", "BA5_R4",
+    "COV_S1_R1", "COV_S1_R2", "COV_S1_R3", "COV_S1_R4",
+    "Delta_R1", "Delta_R2", "Delta_R3", "Delta_R4",
+    "SI_R1", "SI_R2", "SI_R3", "SI_R4",
+    "envelope_z1_r1", "envelope_z1_r2", "envelope_z1_r3", "envelope_z1_r4",
+    "trimer1_r1", "trimer1_r2", "trimer1_r3", "trimer1_r4",
+    "trimer2_r1", "trimer2_r2", "trimer2_r3", "trimer2_r4",
+    "CTL_S1_R1", "CTL_S1_R2", "CTL_S1_R3", "CTL_S1_R4"
+  ),
+  Antigen = c(
+    "Naive_old", "Naive_fresh",
+    rep("BA1.1", 4),
+    rep("BA5", 4),
+    rep("COV_S1", 4),
+    rep("Delta", 4),
+    rep("SI", 4),
+    rep("envelope_z1", 4),
+    rep("trimer1", 4),
+    rep("trimer2", 4),
+    rep("CTL_S1", 4)
+  ),
+  Round = c(
+    1, 1,
+    1,2,3,4,
+    1,2,3,4,
+    1,2,3,4,
+    1,2,3,4,
+    1,2,3,4,
+    1,2,3,4,
+    1,2,3,4,
+    1,2,3,4,
+    1,2,3,4
+  ),
+  Type = c(
+    "Naive_old", "Naive_fresh",
+    rep("Panning", 36)
+  )
+)
+
+
+# compute diversity metrics per sample
+
+diversity_df <- lapply(sample_cols, function(s) {
+  counts <- VH_VL[[s]]
+  counts <- counts[counts > 0]
+  
+  p <- counts / sum(counts)
+  
+  shannon <- -sum(p * log(p))
+  effective_shannon <- exp(shannon)
+  
+  tibble(
+    Sample = s,
+    Shannon = shannon,
+    Effective_Shannon = effective_shannon
+  )
+}) %>%
+  bind_rows() %>%
+  left_join(antigen_map, by = "Sample") %>%
+  mutate(
+    Antigen = ifelse(is.na(Antigen), Sample, Antigen),
+    Round = ifelse(is.na(Round), 1, Round),
+    Type = ifelse(is.na(Type), "Other", Type)
+  )
+
+# Save data
+write.csv(diversity_df, "r_output/tables/diversity_df.csv", row.names = FALSE)
+
+# get antigen order to control facet order and keep unknown samples at the end
+antigen_order <- c(
+  antigen_map$Antigen %>% unique(),
+  setdiff(unique(diversity_df$Antigen), antigen_map$Antigen %>% unique())
+)
+
+# Plot of effective diversity
+ggplot(diversity_df, aes(x = factor(Round), # factor avoids weird x axis for controls due to having just 1 round
+                         y = Effective_Shannon)) +  # I tried log, but it did not improve clarity
+  # lines only for panning samples, skip it for controls
+  geom_line(
+    data = diversity_df %>% filter(Type == "Panning"),
+    aes(group = Antigen),
+    linewidth = 1
+  ) +
+  # points for all samples, including controls
+  geom_point(size = 3) +
+  # facet wrap for each target
+  facet_wrap(~ factor(Antigen, levels = antigen_order), 
+             scales = "free_x") + # fixed y makes facets comparable to each other
+  labs(
+    title = "Library diversity across panning rounds",
+    x = "Panning round",
+    y = "Effective Shannon diversity"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    panel.background = element_rect(fill = "grey95", color = NA),
+    strip.background = element_rect(fill = "grey90", color = NA)
+  )
+
+# Save the plot
+ggsave(filename = "r_output/diversity/Shannon_diversity_by_antigen.png",
+       plot = last_plot(),
+       dpi = 300)
+
+
+##### Alternative, barplot based on previous, but with facets
+
+
+ggplot(diversity_df, aes(x = Sample, y = Effective_Shannon)) +
+  geom_col(width = 0.6, fill = "grey75", color = "black") +
+  facet_wrap(~ factor(Antigen, levels = antigen_order), scales = "free_x", nrow = 1) +
+  labs(
+    title = "Effective Shannon diversity per sample",
+    x = "",
+    y = "Effective Shannon diversity"
+  ) +
+  theme_classic(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+    strip.text = element_blank(), # removing the facet desctiption boxes - to narrow to fit the antigen names nicely
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+# Save the plot
+ggsave(filename = "r_output/diversity/Shannon_diversity_barstyle.png",
+       plot = last_plot(),
+       dpi = 300)
+```
+
+```{r distribution-counts-histogram}
+
+# create a histogram of total_nt_qual, showing how frequently each count occurs across rows. Custom bins, otherwise value "1" towers over everything.
+
+VH_VL_count_bins <- VH_VL %>%
+  mutate(
+    count_bin = case_when(
+      total_nt_qual == 1 ~ "1",
+      total_nt_qual <= 10 ~ "2-10",
+      total_nt_qual <= 100 ~ "11-100",
+      total_nt_qual <= 1000 ~ "101-1000",
+      total_nt_qual > 1000 ~ "1001+"
+    )
+  ) %>%
+  mutate(count_bin = factor(count_bin, levels = c("1", "2-10", "11-100", "101-1000", "1001+"))) # Ensure count_bin is an ordered factor, so that the bins show up in logical order
+
+# Plot histogram with ordered bins
+
+ggplot(VH_VL_count_bins, aes(x = count_bin)) +
+  geom_bar(
+    color = "black",
+    fill = "grey75",
+    alpha = 0.8,
+    width = 0.6
+  ) +
+  scale_y_continuous(
+    trans = 'log10',
+    breaks = c(1, 10, 100, 1000, 10000),
+    labels = scales::comma
+  ) +
+  labs(title = "Distribution of scFv Counts", x = "Total scFv Count Bins", y = "Frequency (counts - log scale)") +
+  theme_classic(base_size = 14) +
+  theme(plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(
+      angle = 45,
+      vjust = 1,
+      hjust = 1
+    ))
+
+# Save the plot
+ggsave(filename = "r_output/barplots/binned_counts_histogram.png",
+       plot = last_plot(),
+       dpi = 300)
+```
+
+
+Here we use a function to generate individual plots of public clonotypes, for any input datasets, and with a number in the tile.
+
+```{r cooccurence-matrix}
+
+plot_scfv_cooccurrence <- function(input_df,
+                                   sample_cols,
+                                   remove_diagonal = TRUE,
+                                   df_name = NULL) {
+  # Convert to logical: TRUE if scFv is present (>0)
+  presence_mat <- input_df[, sample_cols] > 0
+  
+  # Compute co-occurrence matrix
+  cooccur_mat <- t(presence_mat) %*% presence_mat
+  
+  # Name rows and columns
+  rownames(cooccur_mat) <- colnames(cooccur_mat) <- sample_cols
+  
+  # OPTIONAL: remove diagonal
+  if (remove_diagonal) {
+    diag(cooccur_mat) <- NA
+  }
+
+  # Save it for stats
+  write.csv(cooccur_mat,
+          "r_output/tables/cooccur_mat.csv",
+          row.names = FALSE)
+  
+  # Convert to long
+  cooccur_long <- as.data.frame(cooccur_mat) %>%
+    mutate(Sample1 = rownames(cooccur_mat)) %>%
+    pivot_longer(-Sample1, names_to = "Sample2", values_to = "SharedSCFVs") %>%
+    mutate(Label = ifelse(is.na(SharedSCFVs), "NA", SharedSCFVs))
+  
+  # Plot
+  ggplot(cooccur_long, aes(x = Sample1, y = Sample2, fill = SharedSCFVs)) +
+    geom_tile(color = "white") +
+    # geom_text(aes(label = Label), size = 4) + # no space for printing values with high sample numbers
+    scale_fill_gradient(
+      low = "white",
+      high = "red",
+      space = "Lab",
+      name = "Shared scFvs",
+      na.value = "grey90"
+    ) +
+    labs(title = paste("Cooccurrence plot -", df_name)) +
+    theme_minimal(base_size = 5) +
+    theme(
+      axis.text.x = element_text(
+        angle = 45,
+        vjust = 1,
+        hjust = 1
+      ),
+      panel.border = element_rect(
+        color = "black",
+        fill = NA,
+        size = 0.8
+      )
+    ) +
+    coord_fixed()
+}
+
+
+##################### USAGE
+
+# Queue of dataset names the "noone" versions won't differ other than on the diagonal
+queue <- c("VH_VL", "CDR3s", "HCDR3")
+# queue <- c("VH_VL")
+
+for (name in queue) {
+  p <- plot_scfv_cooccurrence(get(name), sample_cols, TRUE, name)
+  print(p)
+  ggsave(
+    filename = paste0("r_output/cooccurence/Cooccurence_plot_", name, ".pdf"),
+    plot = p,
+    width = 4,
+    height = 4
+  )
+}
+
+```
+Here we make a heatmap of public clonotypes, but as a single-use code for a faceted figure, no numbers in the tiles (not enough space).
+
+```{r cooccurence-faceted}
+
+# Define dfs to analyze and names to use for them on the plot
+queue <- list("VH & VL" = VH_VL,
+              "CDR3s"   = CDR3s,
+              "HCDR3"   = HCDR3)
+
+# Build combined long dataframe
+cooccur_all <- bind_rows(lapply(names(queue), function(name) {
+  input_df <- queue[[name]]
+  presence_mat <- input_df[, sample_cols] > 0
+  cooccur_mat <- t(presence_mat) %*% presence_mat
+  rownames(cooccur_mat) <- colnames(cooccur_mat) <- sample_cols
+  diag(cooccur_mat) <- NA  # remove diagonal values (somparison to the same sample)
+  
+  as.data.frame(cooccur_mat) %>%
+    mutate(
+      Sample1 = rownames(cooccur_mat),
+      Dataset = factor(name, levels = names(queue)) # keep the order of facets as on the list
+    ) %>%
+    pivot_longer(-c(Sample1, Dataset),
+                 names_to = "Sample2",
+                 values_to = "SharedSCFVs") %>%
+    mutate(Label = ifelse(is.na(SharedSCFVs), "NA", SharedSCFVs))
+}))
+
+# Prepare pseudocount column to enable using log in the plot coloring
+cooccur_all <- cooccur_all %>%
+  mutate(SharedSCFVs_plot = SharedSCFVs + 1)
+
+# Plot
+ggplot(cooccur_all, aes(x = Sample1, y = Sample2,  fill = SharedSCFVs_plot)) +
+  geom_tile(color = "grey60", size = 0.25) + # set to white to change the look of tile border
+  geom_text(aes(label = SharedSCFVs), size = 0.75, color = "black") +  # add values on the plot
+  scale_fill_gradient(
+    low = "white",
+    high = "red",
+    na.value = "grey90",
+    trans = "log10", # log is used to make the results more visible despite one scale and varying count levels between facets
+    name = "Shared scFvs (+1, log10)" 
+  ) +
+  labs(x = NULL, y = NULL) +
+  facet_wrap( ~ Dataset, nrow = 1) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(
+      angle = 90,
+      vjust = 1,
+      hjust = 1,
+      size = 4
+    ),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.title = element_text(margin = margin(r = 5, b = 0), vjust = 0.75), # adjust vjust to get legend text on the level of legend bar
+    axis.text.y = element_text(size = 4),
+    strip.text = element_text(size = 12),
+    panel.border = element_rect(
+      colour = "black",
+      fill = NA,
+      linewidth = 1
+    ),
+    panel.grid = element_blank()
+  ) +
+  coord_fixed()
+
+# Save the plot
+ggsave(filename = "r_output/cooccurence/Cooccurence_faceted_numbers.png",
+       plot = last_plot(),
+       bg = "white",
+       dpi = 300)
+
+```
+
+Building a heatmap with clustering for one chosen df: VH_VL
+
+
+```{r pheatmap}
+
+# Presence/absence partially normalizes for library sizes mismatch; this way the clustering is not focused on "expression" but types of scFvs
+
+presence_mat <- VH_VL[, sample_cols] > 0
+cooccur_mat <- t(presence_mat) %*% presence_mat
+
+# Optional: hiding diagonal as its ofc high
+# diag(cooccur_mat) <- 0
+
+# prepating log data variant to visualize the whole range of abundances
+cooccur_mat_log <- log10(cooccur_mat + 1)
+
+# pheatmap writes the PDF itself; drawing into a separately opened pdf() device produced an empty file
+pheatmap(
+  cooccur_mat_log, # log version of data
+  cellheight = 10,
+  cellwidth  = 10,
+  display_numbers = FALSE, # numbers are confusing now that it log-ged data (and not just log fill like on the other plot)
+  number_format = "%.0f", # no decimals
+  number_color = "black",
+  colorRampPalette(c("white", "red"))(20), # color = viridis::plasma(100)
+  border_color = "grey70",
+  cluster_rows = TRUE,
+  cluster_cols = TRUE,
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  treeheight_row = 50,
+  fontsize = 6,
+  fontsize_row = 6,
+  fontsize_col = 6,
+  main = "ScFv co-occurrence, presence/absence-based (log (Count + 1)), dataset: VH_VL)",
+  # every barcode pair shares some scFvs, so a binary distance is 0 everywhere; cluster on the log shared counts instead
+  clustering_distance_rows = "euclidean",
+  clustering_distance_cols = "euclidean",
+  clustering_method = "ward.D2",
+  filename = "r_output/cooccurence/Cooccurence_heatmap_clustered_VH_VL.pdf",
+  width = 8,
+  height = 8
+)
+
+```
+
+
+
+```{r top-n-beauty-plots}
+# Function to plot scFv dynamics across samples (smooth alluvial only)
+plot_scfv_dynamics <- function(df,
+                               samples,
+                               ref_sample,
+                               top_n = 10,
+                               epsilon = 1e-6) {
+  # Create synthetic (present in filtered df, but not in collapsed ones)
+  df <- df %>% mutate(Clonotype = paste0("scFv_", row_number()))
+
+  # Library size of each sample, so abundance is a share of that sample's reads
+  library_sizes <- colSums(df[, samples])
+
+  # Select top N clonotypes based on user-defined reference sample
+  top_clones <- df %>%
+    arrange(desc(.data[[ref_sample]])) %>%
+    slice_head(n = top_n) %>%
+    pull(Clonotype)
+  
+  # Pivot to long format
+  plot_df_alluvial <- df %>%
+    filter(Clonotype %in% top_clones) %>%
+    select(Clonotype, all_of(samples)) %>%
+    pivot_longer(
+      cols = all_of(samples),
+      names_to = "Sample",
+      values_to = "Count",
+      values_transform = list(Count = as.numeric)
+    ) %>%
+    mutate(
+      Sample = factor(Sample, levels = samples),
+      Count = ifelse(Count == 0, epsilon, Count),  # replace zeros with a small value, otherwise alluvial plotting will fail
+      Abundance = Count / library_sizes[as.character(Sample)] * 100
+    )
+
+  # Build the ggalluvial plot
+  ggplot(
+    plot_df_alluvial,
+    aes(
+      x = Sample,
+      y = Abundance,
+      alluvium = Clonotype,
+      stratum = Clonotype,
+      fill = Clonotype
+    )
+  ) +
+    ggalluvial::geom_flow(width = 0.5, alpha = 0.8) +
+    ggalluvial::geom_stratum(width = 0.5, color = "black") +
+    scale_fill_viridis_d(option = "turbo") +
+    scale_y_continuous(limits = c(0, 100), expand = c(0, 0)) +
+    theme_pubr(legend = "right") +
+    rotate_x_text(90) +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    labs(
+      x = "",
+      y = "Relative abundance (%)",
+      title = paste("Top", top_n, "scFvs from sample", ref_sample)
+    )
+}
+
+####################### Usage
+
+# Loop over each sample as reference and save
+for (ref in sample_cols) {
+  p <- plot_scfv_dynamics(VH_VL, sample_cols, ref_sample = ref, top_n = 10)
+  print(p)
+  ggsave(
+    filename = paste0("r_output/alluvial/alluvial_top10_", ref, ".svg"),
+    plot = p,
+    width = 12,
+    height = 6
+  )
+}
+
+```
+
+
+```{r}
+# TEMPORARY: cleaning the environment to free up RAM, until I modularize
+
+# Save an object to a file
+saveRDS(filt_df, file = "filt_df.rds")
+
+# MAnually RM, clean env
+
+# Restore the object
+filt_df <- readRDS(file = "filt_df.rds")
+```
+
+
+```{r umap-space}
+
+# Why UMAP? Tsne was too slow with this data size already.
+
+# Collapse sequences but keep the original sequence_id
+
+VH_VL_collapsed <- filt_df %>%
+  mutate(
+    scfv_seq = paste0(
+      VH_sequence_alignment_aa,
+      SCFV_LINKER_AA,
+      VL_sequence_alignment_aa
+    ) # copied the infered linker sequence
+  ) %>%
+  group_by(scfv_seq) %>%
+  summarize(sequence_id = first(sequence_id),
+            across(all_of(sample_cols), \(x) sum(x, na.rm = TRUE)),
+            .groups = "drop")
+
+
+# Convert to long format (one row per scFv per sample)
+
+scfv_long <- VH_VL_collapsed %>%
+  pivot_longer(
+    cols = all_of(sample_cols),
+    names_to = "sample",
+    values_to = "count"
+  ) %>%
+  filter(count > 0)
+
+
+# Create feature matrix (k-mers)
+
+# Why kmers instead of one-hot encoding? They capture similarity of motifs in varied sequences, while onehot requres aligned sequences of the same length.
+# #  Kmer size 3; modify to ger more merged or fragmented clusters and regulate the computing load
+k <- 3
+
+kmerize <- function(seq, k = 3) {
+  substring(seq, 1:(nchar(seq) - k + 1), k:(nchar(seq)))
+}
+
+# Unique scFv list
+unique_seqs <- unique(scfv_long$scfv_seq)
+
+# Build global k-mer vocabulary
+all_kmers <- unique(unlist(lapply(unique_seqs, kmerize, k = k)))
+
+# Create feature matrix
+emb <- t(sapply(unique_seqs, function(s) {
+  km <- kmerize(s, k)
+  tab <- table(factor(km, levels = all_kmers))
+  as.numeric(tab / sum(tab))   # normalize
+}))
+
+# save object - takes a long compute to get it!
+saveRDS(emb, file = "emb_embedding.rds")
+
+# UMAP embedding
+
+n_neighbors <- min(15, nrow(emb) - 1)
+
+um <- umap(emb, n_neighbors = n_neighbors, metric = "cosine")
+
+# save object - takes a long compute to get it!
+saveRDS(um, file = "um_umap.rds")
+
+```
+
+```{r preapare-umap-df}
+
+# if needed
+um <- readRDS(file = "um_umap.rds")
+
+df_umap <- data.frame(scfv_seq = unique_seqs,
+                      UMAP1 = um[, 1],
+                      UMAP2 = um[, 2])
+
+# merge
+
+plot_df_umap <- scfv_long %>%
+  left_join(df_umap, by = "scfv_seq")
+
+# save the DF - it is computationally heavy to produce
+  
+write.csv(plot_df_umap, "r_output/tables/plot_df_umap.csv", row.names = FALSE)
+  
+```
+
+```{r kde-plot}
+
+# plot
+
+ggplot(plot_df_umap, aes(UMAP1, UMAP2)) +
+  stat_density_2d(
+    aes(fill = after_stat(level)),
+    geom = "polygon",
+    alpha = 0.25,
+    color = NA
+  ) +
+  geom_jitter( # or geom_point
+    aes(color = sample),
+    size = 0.5,
+    alpha = 0.6
+  ) +
+  theme_classic(base_size = 14) +
+  labs(title = "scFv sequence space (UMAP)") +
+  theme(
+    # removes meaningless labels
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    panel.border = element_rect(
+      color = "black",
+      fill = NA,
+      linewidth = 0.8
+    ),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+
+# save the plot
+ggsave(filename = "r_output/spaces/scFv_sequence_space_UMAP-KDE.png",
+       plot = last_plot(),
+       dpi = 300)
+
+```
+
+
+```{r kde-with-enrich}
+
+# background KDE (all scFvs)
+bg <- plot_df_umap %>%
+  mutate(group = "all")
+
+# enriched scFvs for a target (example)
+selected_samples <- intersect(c("COV_S1_R2", "COV_S1_R3", "COV_S1_R4", "COV_S1_R1"), sample_cols)
+if (length(selected_samples) == 0) {
+  selected_samples <- head(sample_cols, min(4, length(sample_cols)))
+}
+
+enriched <- plot_df_umap %>%
+  filter(sample %in% selected_samples)
+
+p_kde <- ggplot() +
+  # full landscape
+  stat_density_2d(
+    data = bg,
+    aes(x = UMAP1, y = UMAP2, fill = after_stat(level)),
+    geom = "polygon",
+    bins = 30,
+    alpha = 0.4
+  ) +
+  
+  theme_classic() +
+  labs(title = "Sequence space with enriched regions", color = "Selection round")
+
+if (nrow(enriched) > 1) {
+  p_kde <- p_kde +
+    stat_density_2d(
+      data = enriched,
+      aes(x = UMAP1, y = UMAP2, color = sample),
+      geom = "contour",
+      linewidth = 0.8
+    )
+} else {
+  message("Skipping enriched contour overlay in kde-with-enrich: insufficient points.")
+}
+
+# Save the plot
+ggsave(filename = "r_output/spaces/scFv_sequence_space_UMAP-KDE_contour.png",
+       plot = p_kde,
+       dpi = 300)
+
+print(p_kde)
+```
+
+
+```{r raster-per-sample}
+
+# choose samples
+# chosen_samples <- c("COV_S1_R2")
+chosen_samples <- sample_cols
+
+for (s in chosen_samples) {
+  p <- ggplot() +
+    geom_point(
+      data = plot_df_umap,
+      aes(UMAP1, UMAP2),
+      color = "grey90",
+      size = 0.2,
+      alpha = 0.2
+    ) +
+    
+    stat_density_2d(
+      data = plot_df_umap %>% filter(sample == s),
+      aes(UMAP1, UMAP2, fill = after_stat(density)),
+      geom = "raster",
+      contour = FALSE,
+      n = 200
+    ) +
+    
+    scale_fill_viridis_c() +
+    coord_equal() +
+    theme_classic() +
+    ggtitle(s)
+  
+  print(p)
+  
+  ggsave(
+    filename = paste0("r_output/spaces/UMAP_raster_", s, ".png"), # PDF and SVG not great here, because it is a raster image
+    plot = p,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+}
+
+```
+
+```{r control-overlay-together}
+
+# Choose your sample to plot
+# chosen_samples <- c("COV_S1_R4")  # or loop through sample_cols
+chosen_samples <- sample_cols
+
+# Define all control rounds
+control_samples <- c("CTL_S1_R1", "CTL_S1_R2", "CTL_S1_R3", "CTL_S1_R4",
+                     "envelope_z1_r1", "envelope_z1_r2", "envelope_z1_r3", "envelope_z1_r4")
+
+# Filter control data (all rounds combined)
+control_data <- plot_df_umap %>% filter(sample %in% control_samples)
+has_control_overlay <- nrow(control_data) > 1
+
+for (s in chosen_samples) {
+  p <- ggplot() +
+    # Background points
+    geom_point(
+      data = plot_df_umap,
+      aes(UMAP1, UMAP2),
+      color = "grey90",
+      size = 0.2,
+      alpha = 0.2
+    ) +
+    
+    # Main sample density raster
+    stat_density_2d(
+      data = plot_df_umap %>% filter(sample == s),
+      aes(UMAP1, UMAP2, fill = after_stat(density)),
+      geom = "raster",
+      contour = FALSE,
+      n = 200
+    )
+
+  # All control contours combined (white)
+  if (has_control_overlay) {
+    p <- p +
+      stat_density_2d(
+        data = control_data,
+        aes(UMAP1, UMAP2),
+        color = "white",
+        alpha = 0.6,
+        bins = 10,
+        linewidth = 0.4,
+        contour = TRUE
+      )
+  }
+
+  p <- p +
+    scale_fill_viridis_c(option = "magma") +
+    coord_equal() +
+    theme_classic() +
+    ggtitle(
+      if (has_control_overlay) {
+        paste0(s, " (white = all control rounds combined)")
+      } else {
+        paste0(s, " (no control rounds found)")
+      }
+    )
+  
+  print(p)
+  
+#  ggsave(
+#    filename = paste0("r_output/spaces/overlays/together/UMAP_raster_with_controls_together_", s, ".png"),
+#    plot = p,
+#    width = 8,
+#    height = 6,
+#    dpi = 300
+#  )
+}
+
+```
+
+```{r ontrols-overlay-separate}
+
+# Choose your sample to plot
+# chosen_samples <- c("COV_S1_R4")  # or loop through sample_cols
+chosen_samples <- sample_cols
+
+# Separate by control type
+ctl_data <- plot_df_umap %>% filter(grepl("CTL_S1", sample))
+envelope_data <- plot_df_umap %>% filter(grepl("envelope_z1", sample))
+has_ctl_overlay <- nrow(ctl_data) > 1
+has_env_overlay <- nrow(envelope_data) > 1
+
+for (s in chosen_samples) {
+  p <- ggplot() +
+    geom_point(
+      data = plot_df_umap,
+      aes(UMAP1, UMAP2),
+      color = "grey90",
+      size = 0.2,
+      alpha = 0.2
+    ) +
+    
+    stat_density_2d(
+      data = plot_df_umap %>% filter(sample == s),
+      aes(UMAP1, UMAP2, fill = after_stat(density)),
+      geom = "raster",
+      contour = FALSE,
+      n = 200
+    )
+
+  if (has_ctl_overlay) {
+    p <- p +
+      stat_density_2d(
+        data = ctl_data,
+        aes(UMAP1, UMAP2),
+        color = "red",
+        alpha = 0.7,
+        bins = 5,
+        linewidth = 0.7
+      )
+  }
+
+  if (has_env_overlay) {
+    p <- p +
+      stat_density_2d(
+        data = envelope_data,
+        aes(UMAP1, UMAP2),
+        color = "cyan",
+        alpha = 0.7,
+        bins = 5,
+        linewidth = 0.7
+      )
+  }
+
+  p <- p +
+    scale_fill_viridis_c(option = "magma") +
+    coord_equal() +
+    theme_classic() +
+    ggtitle(paste0(
+      s,
+      " | Red = CTL (all rounds), Cyan = envelope_z1 (all rounds)",
+      if (!has_ctl_overlay && !has_env_overlay) " [controls not found]" else ""
+    ))
+  
+  print(p)
+  
+  ggsave(
+    filename = paste0("r_output/spaces/overlays/separate/UMAP_raster_with_controls_separate_", s, ".png"),
+    plot = p,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+}
+```
+
+
+
+
+```{r raster-facets}
+
+# That's a good basic option with all samples
+
+p <- ggplot(plot_df_umap, aes(UMAP1, UMAP2)) +
+  stat_density_2d(
+    aes(fill = after_stat(ndensity)),  # normalized density, showing each sample's structure well, like independent scales on single plots; also `density` does not work correctly
+    geom = "raster",
+    contour = FALSE,
+    n = 200
+  ) +
+  scale_fill_viridis_c() +
+  coord_equal() +
+  theme_classic() +
+  facet_wrap(~ sample, ncol = 4)
+
+ggsave(
+  filename = "r_output/spaces/UMAP_raster_faceted.png",
+  plot = p,
+  width = 8,
+  height = 12,
+  dpi = 300
+)
+
+print(p)
+```
+
+
+
+```{r raster-facets-reordered}
+
+# It's a fancy version with samples chosen and ordered
+
+# Define order: all samples except NEW_LIB and OG_LIB, then those two at the end
+desired_order <- c(
+  "BA1.1_R1", "BA1.1_R2", "BA1.1_R3", "BA1.1_R4",
+  "BA5_R1", "BA5_R2", "BA5_R3", "BA5_R4",
+  "COV_S1_R1", "COV_S1_R2", "COV_S1_R3", "COV_S1_R4",
+  "CTL_S1_R1", "CTL_S1_R2", "CTL_S1_R3", "CTL_S1_R4",
+  "Delta_R1", "Delta_R2", "Delta_R3", "Delta_R4",
+  "SI_R1", "SI_R2", "SI_R3", "SI_R4",
+  "envelope_z1_r1", "envelope_z1_r2", "envelope_z1_r3", "envelope_z1_r4",
+  "trimer1_r1", "trimer1_r2", "trimer1_r3", "trimer1_r4",
+#  "trimer2_r1", "trimer2_r2", "trimer2_r3", "trimer2_r4", # excluding trimer2, because only 1s sample shows correctly, and it confuses the plot order
+  "OG_LIB", "NEW_LIB"  # Libraries at the end so they have a separate row
+)
+
+# Keep canonical order when those names exist; otherwise include all observed samples.
+present_order <- intersect(desired_order, unique(plot_df_umap$sample))
+if (length(present_order) == 0) {
+  present_order <- sort(unique(plot_df_umap$sample))
+}
+
+plot_df_umap_ordered <- plot_df_umap %>%
+  filter(sample %in% present_order) %>%
+  mutate(sample = factor(sample, levels = present_order))
+
+p <- ggplot(plot_df_umap_ordered, aes(UMAP1, UMAP2)) +
+  stat_density_2d(
+    aes(fill = after_stat(ndensity)),
+    geom = "raster",
+    contour = FALSE,
+    n = 200
+  ) +
+  scale_fill_viridis_c(option = "viridis") +
+  coord_equal() +
+  theme_classic() +
+  facet_wrap(~ sample, ncol = 4)
+
+ggsave(
+  filename = "r_output/spaces/UMAP_raster_faceted.png",
+  plot = p,
+  width = 8,
+  height = 12,
+  dpi = 300
+)
+print(p)
+```
+
+```{r faceted-control-overlay}
+# Define all control rounds
+control_samples <- c("CTL_S1_R1", "CTL_S1_R2", "CTL_S1_R3", "CTL_S1_R4",
+                     "envelope_z1_r1", "envelope_z1_r2", "envelope_z1_r3", "envelope_z1_r4")
+
+# Filter control data and REMOVE the sample column so it applies to all facets (avoids facetign by ~ sample)
+control_data <- plot_df_umap %>% 
+  filter(sample %in% control_samples) %>%
+  select(-sample)
+has_control_overlay <- nrow(control_data) > 1
+
+# Define order for facets
+desired_order <- c(
+  "CTL_S1_R1", "CTL_S1_R2", "CTL_S1_R3", "CTL_S1_R4", # controls first
+  "envelope_z1_r1", "envelope_z1_r2", "envelope_z1_r3", "envelope_z1_r4", # controls first
+  "BA1.1_R1", "BA1.1_R2", "BA1.1_R3", "BA1.1_R4",
+  "BA5_R1", "BA5_R2", "BA5_R3", "BA5_R4",
+  "COV_S1_R1", "COV_S1_R2", "COV_S1_R3", "COV_S1_R4",
+  "Delta_R1", "Delta_R2", "Delta_R3", "Delta_R4",
+  "SI_R1", "SI_R2", "SI_R3", "SI_R4",
+  "trimer1_r1", "trimer1_r2", "trimer1_r3", "trimer1_r4",
+  "OG_LIB", "NEW_LIB"
+)
+
+present_order <- intersect(desired_order, unique(plot_df_umap$sample))
+if (length(present_order) == 0) {
+  present_order <- sort(unique(plot_df_umap$sample))
+}
+
+plot_df_umap_ordered <- plot_df_umap %>%
+  filter(sample %in% present_order) %>%
+  mutate(sample = factor(sample, levels = present_order))
+
+p <- ggplot(plot_df_umap_ordered, aes(UMAP1, UMAP2)) +
+  # Main density raster for each facet
+  stat_density_2d(
+    aes(fill = after_stat(ndensity)),
+    geom = "raster",
+    contour = FALSE,
+    n = 200
+  )
+
+if (has_control_overlay) {
+  p <- p +
+    stat_density_2d(
+      data = control_data,
+      color = "white",
+      alpha = 0.6,
+      bins = 5, # 2 minimum, 1 causes error
+      linewidth = 0.3,
+      contour = TRUE
+    )
+}
+
+p <- p +
+  scale_fill_viridis_c(option = "magma") +
+  coord_equal() +
+  theme_classic() +
+  facet_wrap(~ sample, ncol = 4) +
+  labs(caption = if (has_control_overlay) {
+    "White contours = combined negative controls (CTL + envelope_z1, all rounds)"
+  } else {
+    "No control rounds found for contour overlay."
+  })
+
+ggsave(
+  filename = "r_output/spaces/umap_space_facets_controls_overlaid_together.png",
+  plot = p,
+  width = 8,
+  height = 12,
+  dpi = 300
+)
+print(p)
+
+```
+
+```{r saving-vertical}
+
+# Define all control rounds
+control_samples <- c("CTL_S1_R1", "CTL_S1_R2", "CTL_S1_R3", "CTL_S1_R4",
+                     "envelope_z1_r1", "envelope_z1_r2", "envelope_z1_r3", "envelope_z1_r4")
+
+# Filter control data and REMOVE the sample column so it applies to all facets
+control_data <- plot_df_umap %>% 
+  filter(sample %in% control_samples) %>%
+  select(-sample)
+has_control_overlay <- nrow(control_data) > 1
+
+# Create antigen and round columns
+plot_df_umap_grid <- plot_df_umap %>%
+  filter(!grepl("trimer2", sample)) %>%  # Remove the unwanted antigen, it only has 1 sample that plots correctly
+  mutate(
+    antigen = case_when(
+      grepl("CTL_S1", sample) ~ "CTL_S1",
+      grepl("envelope", sample) ~ "envelope_z1",
+      grepl("BA1.1", sample) ~ "BA1.1",
+      grepl("BA5", sample) ~ "BA5",
+      grepl("COV_S1", sample) ~ "COV_S1",
+      grepl("Delta", sample) ~ "Delta",
+      grepl("^SI_", sample) ~ "SI",
+      grepl("trimer1_", sample) ~ "trimer1", # careful so the regex does not catch ...r1 in the name as round
+      sample == "OG_LIB" ~ "Libraries",
+      sample == "NEW_LIB" ~ "Libraries",
+      TRUE ~ sample
+    ),
+    round = case_when(
+      grepl("_[Rr]1$", sample) ~ "R1",  # Must end with _R1 or _r1
+      grepl("_[Rr]2$", sample) ~ "R2",  # Must end with _R2 or _r2
+      grepl("_[Rr]3$", sample) ~ "R3",  # Must end with _R3 or _r3
+      grepl("_[Rr]4$", sample) ~ "R4",  # Must end with _R4 or _r4
+      sample == "OG_LIB" ~ "R1",
+      sample == "NEW_LIB" ~ "R2",
+      TRUE ~ "Other"
+    )
+  )
+
+preferred_antigen_order <- c(
+  "CTL_S1", "envelope_z1", "BA1.1", "BA5", "COV_S1",
+  "Delta", "SI", "trimer1", "Libraries"
+)
+observed_antigens <- unique(plot_df_umap_grid$antigen)
+antigen_levels <- c(
+  intersect(preferred_antigen_order, observed_antigens),
+  setdiff(sort(observed_antigens), preferred_antigen_order)
+)
+
+plot_df_umap_grid <- plot_df_umap_grid %>%
+  mutate(
+    antigen = factor(antigen, levels = antigen_levels),
+    round = factor(round, levels = c("R1", "R2", "R3", "R4", "Other"))
+  )
+
+p <- ggplot(plot_df_umap_grid, aes(UMAP1, UMAP2)) +
+  # Main density raster for each facet
+  stat_density_2d(
+    aes(fill = after_stat(ndensity)),
+    geom = "raster",
+    contour = FALSE,
+    n = 200
+  )
+
+if (has_control_overlay) {
+  p <- p +
+    stat_density_2d(
+      data = control_data,
+      color = "white",
+      alpha = 0.6,
+      bins = 5,
+      linewidth = 0.3,
+      contour = TRUE
+    )
+}
+
+p <- p +
+  scale_fill_viridis_c(option = "magma") +
+  coord_equal() +
+  theme_classic() +
+  facet_grid(antigen ~ round, switch = "y") +  # Rows = antigen, Cols = round
+  theme(
+    strip.placement = "outside",  # Put row labels outside
+    strip.background = element_blank(),  # Remove grey background
+    panel.spacing = unit(0, "lines")  # Reduce spacing between panels
+  ) +
+  labs(caption = if (has_control_overlay) {
+    "White contours = combined negative controls (CTL + envelope_z1, all rounds)"
+  } else {
+    "No control rounds found for contour overlay."
+  })
+
+ggsave(
+  filename = "r_output/spaces/umap_space_facets_controls_overlaid_together_compressed.svg",
+  plot = p,
+  width = 10,
+  height = 12,
+  dpi = 300
+)
+print(p)
+
+```
+
+
+
+
+```{r chord-function}
+
+# Generalizing chord diagram to a function so I can run it for each sample
+
+plot_chord <- function(df, sample_col) {
+  # count-weighted
+  vh_vl_counts <- df %>%
+    group_by(VH_v_call, VL_v_call) %>%
+    summarise(count = sum(.data[[sample_col]]), .groups = "drop") %>%
+    filter(count > 0)
+  
+  # presence / absence (unweighted)
+  vh_vl_presence <- df %>%
+    filter(.data[[sample_col]] > 0) %>%
+    distinct(VH_v_call, VL_v_call) %>%
+    mutate(count = 1)
+  
+  # SAFETY CHECKS - otherwise the function may stop and generate unreadable PDFs at samples with insufficient data
+  
+  if (nrow(vh_vl_counts) == 0 || nrow(vh_vl_presence) == 0) {
+    message("Skipping ", sample_col, ": no VH–VL pairs")
+    return(invisible(NULL))
+  }
+  
+  if (length(unique(vh_vl_counts$VH_v_call)) < 1 ||
+      length(unique(vh_vl_counts$VL_v_call)) < 1) {
+    message("Skipping ", sample_col, ": not enough sectors for chord diagram")
+    return(invisible(NULL))
+  }
+  
+  # define colors for VH and VL families; okay to base it on counts and not presence dataset but use for both if both contain the same families
+  vh_families <- unique(vh_vl_counts$VH_v_call)
+  vl_families <- unique(vh_vl_counts$VL_v_call)
+  
+  # VH families: viridis palette
+  vh_colors <- setNames(viridis(length(vh_families), option = "rocket"), vh_families)
+  
+  # VL families: magma palette
+  vl_colors <- setNames(viridis(length(vl_families), option = "mako"), vl_families)
+  
+  # merge colors
+  grid_colors <- c(vh_colors, vl_colors)
+  
+  # split plotting area
+  par(
+    mfrow = c(1, 2),
+    mar = c(1, 1, 1, 1),
+    oma = c(0, 0, 3, 0)
+  ) # OMA needed for the main title
+  
+  # weighted plot (Count)
+  chordDiagram(
+    vh_vl_counts[, c("VH_v_call", "VL_v_call", "count")],
+    grid.col = grid_colors,
+    transparency = 0.25,
+    annotationTrack = c("grid"),
+    preAllocateTracks = 1
+  )
+  
+  mtext("weighted (count-based)", side = 3, line = 0.5, cex = 1, outer = FALSE)
+  
+  circos.track(
+    track.index = 1,
+    panel.fun = function(x, y) {
+      sector_name <- get.cell.meta.data("sector.index")
+      xcenter <- get.cell.meta.data("xcenter")
+      circos.text(
+        x = xcenter,
+        y = 0.9,
+        labels = sector_name,
+        facing = "clockwise",
+        niceFacing = TRUE,
+        adj = c(0.5, 0.5),
+        cex = 0.5
+      )
+    },
+    bg.border = NA
+  )
+  
+  
+  # unweighted plot (Presence-absence)
+  chordDiagram(
+    vh_vl_presence[, c("VH_v_call", "VL_v_call", "count")],
+    grid.col = grid_colors,
+    transparency = 0.25,
+    annotationTrack = c("grid"),
+    preAllocateTracks = 1
+  )
+  
+  mtext("unweighted (presence-absence)", side = 3, line = 0.5, cex = 1, outer = FALSE)
+  
+  circos.track(
+    track.index = 1,
+    panel.fun = function(x, y) {
+      sector_name <- get.cell.meta.data("sector.index")
+      xcenter <- get.cell.meta.data("xcenter")
+      circos.text(
+        x = xcenter,
+        y = 0.9,
+        labels = sector_name,
+        facing = "clockwise",
+        niceFacing = TRUE,
+        adj = c(0.5, 0.5),
+        cex = 0.5
+      )
+    },
+    bg.border = NA
+  )
+  
+  
+  # Title for the entire plot
+  mtext(
+    paste("VH-VL pairings -", sample_col),
+    outer = TRUE,
+    line = 1,
+    cex = 1.2
+  )
+  
+  # reset circlize state
+  circos.clear()
+}
+
+
+
+
+########################## USAGE
+
+# Use the function on any number of samples (count columns)
+samples <- sample_cols
+
+# overriding to test a few samples manually
+# samples <- c("COV_S1_R1", "COV_S1_R2", "COV_S1_R3", "COV_S1_R4")
+
+# Plot
+
+for (s in samples) {
+    # save the plot; it saves a file even if the function returned null due to security check (bad input)
+    pdf(
+    file = paste0("r_output/chords/chord_", s, ".pdf"), # careful with formats here
+    width = 12,
+    height = 6
+  )
+  plot_chord(filt_df, s)
+  dev.off()
+  plot_chord(filt_df, s) # display the plot; circlize does not return plots like normal ggplot to allow p <- function etc.
+}
+
+
+```
