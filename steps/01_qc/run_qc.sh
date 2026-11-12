@@ -97,13 +97,13 @@ else
     echo "Input: ${READS_DIR}"
     echo "Output: ${OUT_HOST}"
 
-    exec docker run --rm \
+    exec docker run --rm --init \
         --user "$(id -u):$(id -g)" \
-        -e THREADS \
-        -e JOBS \
-        -e MIN_LENGTH \
-        -e KEEP_PERCENT \
-        -e CLEAN_FASTQ \
+        -e THREADS="${THREADS}" \
+        -e JOBS="${JOBS}" \
+        -e MIN_LENGTH="${MIN_LENGTH}" \
+        -e KEEP_PERCENT="${KEEP_PERCENT}" \
+        -e CLEAN_FASTQ="${CLEAN_FASTQ}" \
         -v "${READS_DIR}:/data/reads:ro" \
         -v "${OUT_HOST}:/data/qc_results" \
         -v "${SCRIPT_DIR}/run_qc.sh:/opt/pipeline/run_pipeline.sh:ro" \
@@ -141,8 +141,8 @@ count_reads() {
     local count
     count=$(seqkit stats -T "$1" 2>/dev/null | awk 'NR>1{print $4; exit}')
     if [[ -z "$count" || ! "$count" =~ ^[0-9]+$ ]]; then
-        echo "Warning: could not parse read count for $1 (got '${count:-<empty>}'), treating as 0" >&2
-        count=0
+        echo "ERROR: could not parse read count for $1 (got '${count:-<empty>}')" >&2
+        exit 1
     fi
     echo "$count"
 }
@@ -202,6 +202,8 @@ run_with_limit() {
     while (( ${#PIDS[@]} >= JOBS )); do
         for i in "${!PIDS[@]}"; do
             if ! kill -0 "${PIDS[i]}" 2>/dev/null; then
+                # collect the finished job's exit status; a failed barcode stops the run (set -e)
+                wait "${PIDS[i]}"
                 unset 'PIDS[i]'
             fi
         done
@@ -321,7 +323,7 @@ process_sample() {
             --outdir "$outdir" \
             --prefix "${sample}_" \
             --threads "$THREADS" \
-            --plots dot 2>&1 | grep -v "WARNING:root:Plotly\|Kaleido\|pip install" || true
+            --plots dot > "${outdir}.nanoplot.log" 2>&1
     fi
 
     # Stage 1: Trim
@@ -345,7 +347,7 @@ process_sample() {
             --outdir "$outdir" \
             --prefix "${sample}_" \
             --threads "$THREADS" \
-            --plots dot 2>&1 | grep -v "WARNING:root:Plotly\|Kaleido\|pip install" || true
+            --plots dot > "${outdir}.nanoplot.log" 2>&1
     fi
 
     # Stage 2: Filter
@@ -368,7 +370,7 @@ process_sample() {
             --outdir "$outdir" \
             --prefix "${sample}_" \
             --threads "$THREADS" \
-            --plots dot 2>&1 | grep -v "WARNING:root:Plotly\|Kaleido\|pip install" || true
+            --plots dot > "${outdir}.nanoplot.log" 2>&1
     fi
 }
 
@@ -387,10 +389,12 @@ log_stage "STAGE 3"
 
 mkdir -p "${STAGE_MULTIQC}"
 
+# --dirs keeps the stage in the sample names; without it the three stages collide and only one is shown
 multiqc \
     "${STAGE_CLEANED}/nanoplot" \
     "${STAGE_TRIMMED}/nanoplot" \
     "${STAGE_FILTERED}/nanoplot" \
+    --dirs --dirs-depth 3 \
     --outdir "${STAGE_MULTIQC}" \
     --title "Nanopore QC Report" \
     --filename multiqc_report \

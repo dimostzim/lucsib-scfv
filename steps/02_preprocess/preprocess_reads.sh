@@ -69,7 +69,7 @@ for fastq in "${READS_DIR}"/*.fastq; do
       --max-len "${MAX_LEN}" \
       --orient none
 
-    docker run --rm \
+    docker run --rm --init \
       --user "$(id -u):$(id -g)" \
       -v "${OUT_DIR}:/work" \
       -v "${GERMLINE_DIR}:/germ:ro" \

@@ -1,7 +1,7 @@
 # Unofficial updated version from https://github.com/MikolajKocikowski
 
 # Use a newer Ubuntu because the previous base pinned R 3.6.3, no longer compatible with the required R packages as available on CRAN.
-FROM ubuntu:22.04
+FROM ubuntu:22.04@sha256:74b12b11ffa550fba1929ad4d8d16533c34f6612728469671afba1b03b66881c
 
 # Use bash for all RUN commands
 SHELL ["/bin/bash", "-c"]
@@ -52,7 +52,7 @@ RUN conda install -y -c bioconda seqkit=${VERSION_SEQKIT} \
                                  bioawk=${VERSION_BIOAWK}
 
 # pinning the last AntPack version that does not require a licence key
-RUN pip3 install logomaker \
+RUN pip3 install logomaker==0.8.7 \
                  antpack==0.3.8.5
 
 # install IgBLAST

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import shutil
+import subprocess
 from pathlib import Path
 
 SAMPLES = ["02", "03", "05", "06", "07", "08", "09", "10", "11", "12"]
@@ -43,6 +44,7 @@ FILES = [
     ("06_tim3_binders/report/label_read_summary.tsv", "06_tim3_binders/labels/label_read_summary.tsv"),
     ("06_tim3_binders/report/top_clones_by_label.tsv", "06_tim3_binders/labels/top_clones_by_label.tsv"),
     ("06_tim3_binders/report/sanger_conflict_audit.tsv", "06_tim3_binders/labels/sanger_conflict_audit.tsv"),
+    ("06_tim3_binders/report/label_matrix_for_plotting.tsv", "06_tim3_binders/labels/label_matrix_for_plotting.tsv"),
     ("06_tim3_binders/diversity_sweep/diversity_sweep_summary.tsv", "06_tim3_binders/representative_sets/diversity_sweep_summary.tsv"),
     ("05_specificity/figures/figure1_r4_h460pcnb_specific.png", "figures/01_H460PCNB_R4_sequence_families.png"),
     ("05_specificity/figures/figure2_allrounds_alltargets.png", "figures/02_all_rounds_all_targets.png"),
@@ -75,6 +77,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--work-dir", type=Path, required=True)
     p.add_argument("--output-dir", type=Path, required=True)
+    p.add_argument("--repo-dir", type=Path, required=True, help="pipeline repository, for provenance")
     args = p.parse_args()
 
     missing = [src for src, _ in FILES if not (args.work_dir / src).is_file() or (args.work_dir / src).stat().st_size == 0]
@@ -93,6 +96,19 @@ def main() -> None:
     for src, dst in FOLDERS:
         shutil.copytree(args.work_dir / src, args.output_dir / dst, dirs_exist_ok=True)
     shutil.copyfile(Path(__file__).with_name("results_README.md"), args.output_dir / "README.md")
+
+    # provenance: pipeline commit, settings, input checksums and software versions
+    prov = args.output_dir / "provenance"
+    prov.mkdir(parents=True, exist_ok=True)
+    commit = subprocess.run(["git", "-C", str(args.repo_dir), "rev-parse", "HEAD"], check=True,
+                            capture_output=True, text=True).stdout.strip()
+    dirty = subprocess.run(["git", "-C", str(args.repo_dir), "status", "--porcelain"], check=True,
+                           capture_output=True, text=True).stdout.strip()
+    (prov / "pipeline_commit.txt").write_text(f"{commit}{' (with uncommitted changes)' if dirty else ''}\n")
+    for name in ("settings.env", "inputs_sha256.tsv"):
+        shutil.copyfile(args.repo_dir / "config" / name, prov / name)
+    for listing in sorted((args.work_dir / "tools").glob("*/*.packages.txt")):
+        shutil.copyfile(listing, prov / listing.name)
     print(f"Collected {len(FILES)} files and {len(FOLDERS)} folders into {args.output_dir}")
 
 

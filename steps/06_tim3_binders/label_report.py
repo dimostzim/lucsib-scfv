@@ -283,7 +283,7 @@ def write_report(summary: Sequence[dict], top_rows: Sequence[dict], conflicts: S
 ## Label Rules
 
 - `bind`: direct high-confidence `nt_scFv` alignment to a validated Sanger `yes` clone.
-- `bind_context`: `nt_scFv` was ambiguous, but full Nanopore read context favors the Sanger `yes` reference by >0.5 percentage points in >=90% of represented reads.
+- `bind_context`: `nt_scFv` was ambiguous (equally close to a `yes` and a `no` Sanger clone); over the full Nanopore reads, most reads match the `yes` clone better by >0.5 percentage points and the `yes` clone aligns to the full reads with >=91% identity. The competing Sanger clones have identical scFv sequences, so this call rests on sequence outside the scFv.
 - `no_bind`: direct high-confidence `nt_scFv` alignment to a validated Sanger `no` clone.
 - `ambiguous`: unresolved `yes`/`no` conflict.
 - `unknown`: no strong validated Sanger match.

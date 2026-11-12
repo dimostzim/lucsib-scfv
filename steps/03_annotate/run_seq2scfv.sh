@@ -264,7 +264,7 @@ EOF
 chmod +x "${RUN_DIR}/_container_pipeline.sh"
 
 echo "Run directory: ${RUN_DIR}"
-docker run --rm \
+docker run --rm --init \
   --user "$(id -u):$(id -g)" \
   -e THREADS="${THREADS}" \
   -e ORGANISM="${ORGANISM}" \
@@ -313,9 +313,10 @@ count_fasta_headers() {
 
 {
   echo -e "Category\tCount"
-  echo -e "Merged libraries\t$(count_tsv_rows "${RUN_DIR}/2.Catalogued/merged.nt_correspondence.tsv")"
-  echo -e "De-duplicated reads\t$(count_fasta_headers "${RUN_DIR}/2.Catalogued/merged.nt_seguid.fa")"
-  echo -e "Ig domains\t$(count_tsv_rows "${RUN_DIR}/3.vscan/igBLAST.tsv")"
+  # the correspondence table has no header: one line per read
+  echo -e "Reads (all barcodes)\t$(wc -l < "${RUN_DIR}/2.Catalogued/merged.nt_correspondence.tsv")"
+  echo -e "Unique read sequences\t$(count_fasta_headers "${RUN_DIR}/2.Catalogued/merged.nt_seguid.fa")"
+  echo -e "Ig domain hits (IgBLAST rows)\t$(count_tsv_rows "${RUN_DIR}/3.vscan/igBLAST.tsv")"
   echo -e "Non-paired / multi VH/VL\t$(count_tsv_rows "${RUN_DIR}/4.scFv_split/igBLAST_non_paired_nondelim.tsv")"
   echo -e "Out-of-frame scFvs\t$(count_tsv_rows "${RUN_DIR}/4.scFv_split/out_of_frame_igBLAST_paired_delim.tsv")"
   echo -e "Non-standard AAs\t$(count_tsv_rows "${RUN_DIR}/4.scFv_split/in_frame_igBLAST_delim_nonstandard_aas.tsv")"

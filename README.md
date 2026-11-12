@@ -13,7 +13,7 @@ adapted version of his R notebook from `covid-scfv-publication`. Both are downlo
 
 ## Requirements
 
-- Linux with Docker (the user must be able to run `docker`), conda, git and Python 3.
+- Linux with Docker (the user must be able to run `docker`), conda, git and Python 3.8 or newer.
 - About 250 GB of disk for the work folder and 64 CPU threads (fewer works, more slowly).
 - Internet access to Zenodo, GitHub, conda-forge, bioconda and Docker Hub. Proxy variables in the environment are
   passed to the Docker builds.
@@ -30,8 +30,11 @@ bash run_all.sh                           # all steps; or e.g. --from 04 --to 07
 ```
 
 `run_all.sh` prints `PROGRESS` lines and stops at the first error. Each step writes to its own folder in the work
-folder, and step 07 collects the final tables and figures into `<WORK_DIR>/results` (see
-`steps/07_collect_results/results_README.md` for what each file is).
+folder and deletes that folder first, so rerunning a step (for example `--from 04`) replaces its outputs and never
+mixes in older or partial files. Step 00 keeps verified downloads and reuses conda environments whose `envs/*.yml`
+has not changed. Step 07 collects the final tables and figures into `<WORK_DIR>/results` (see
+`steps/07_collect_results/results_README.md` for what each file is), with the pipeline commit, settings and
+software versions in `results/provenance/`.
 
 ## Steps
 

@@ -75,10 +75,23 @@ cp -a "${SRC}/internal_data/dog" "${OUT_DIR}/internal_data/"
 
 echo "[5/5] Conda environments"
 for env in r python; do
-  if [[ ! -d "${TOOLS_DIR}/envs/${env}" ]]; then
-    conda env create --quiet -p "${TOOLS_DIR}/envs/${env}" -f "${REPO_DIR}/envs/${env}.yml"
+  env_dir="${TOOLS_DIR}/envs/${env}"
+  yml_sha="$(sha256sum "${REPO_DIR}/envs/${env}.yml" | cut -d' ' -f1)"
+  # recreate the environment when its yml changed since it was built
+  if [[ -d "${env_dir}" && "$(cat "${env_dir}/.envs_yml_sha256" 2>/dev/null)" != "${yml_sha}" ]]; then
+    rm -rf "${env_dir}"
   fi
-  conda list -p "${TOOLS_DIR}/envs/${env}" > "${TOOLS_DIR}/envs/${env}.packages.txt"
+  if [[ ! -d "${env_dir}" ]]; then
+    conda env create --quiet -p "${env_dir}" -f "${REPO_DIR}/envs/${env}.yml"
+    echo "${yml_sha}" > "${env_dir}/.envs_yml_sha256"
+  fi
+  conda list -p "${env_dir}" > "${TOOLS_DIR}/envs/${env}.packages.txt"
 done
+
+# record the package versions inside both images
+mkdir -p "${TOOLS_DIR}/images"
+docker run --rm "${QC_IMAGE}" bash -c 'conda list -n nanopore_qc' > "${TOOLS_DIR}/images/${QC_IMAGE}.packages.txt"
+docker run --rm "${SEQ2SCFV_IMAGE}" bash -c 'conda list; pip freeze; igblastn -version' \
+  > "${TOOLS_DIR}/images/${SEQ2SCFV_IMAGE}.packages.txt"
 
 echo "Tools ready in ${TOOLS_DIR}"

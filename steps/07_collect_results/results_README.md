@@ -24,9 +24,10 @@ A "distinct scFv" is a unique pair of heavy and light chain protein sequences. L
 
 ## Tables
 
-- `01_qc/reads_per_qc_stage.tsv`: reads per barcode before QC, after cleaning, adapter trimming and length/quality filtering. `multiqc_report.html` has the read length and quality plots.
-- `03_annotate/attrition.tsv`: sequences kept at each step of the scFv annotation.
+- `01_qc/reads_per_qc_stage.tsv`: reads per barcode before QC, after cleaning, adapter trimming and length/quality filtering. `multiqc_report.html` has read length and quality summaries for each barcode at each of the three stages.
+- `03_annotate/attrition.tsv`: counts through the scFv annotation: reads, unique read sequences, IgBLAST domain hits, sequences without one paired heavy and light domain, out-of-frame scFvs, scFvs with non-standard amino acids, and validated scFvs.
 - `04_count_tables/`: read counts per barcode for each distinct scFv (`counts_heavy_light_pairs`), each heavy and light CDR3 pair (`counts_cdr3_pairs`) and each heavy CDR3 (`counts_heavy_cdr3`); `attrition_with_r_filters.csv` continues the attrition table through the filters of the count-table notebook; `count_tables_notebook.html` is the rendered notebook.
 - `05_specificity/r4_h460pcnb_families/`: the H460 PCNB round 4 candidates (present in H460 PCNB round 4, absent from huAEC round 4) with their family, map position and nearest-neighbour similarity; family sizes; family similarity matrix.
 - `05_specificity/all_rounds/`: the same for all sequences of rounds 2 to 4, plus each sample's average map position and the overlap (Jaccard index) between samples.
-- `06_tim3_binders/`: TIM-3 scFvs labelled as binder or non-binder by matching to the 30 Sanger-sequenced clones. `label_report.md` explains the labels; `labels/` holds the label tables; `fasta/` holds the labelled sequences; `representative_sets/` holds non-redundant strict-binder sets at 95, 96 and 97% protein identity and 99% DNA identity, each as a table of all candidates with their cluster and a FASTA of the representatives.
+- `06_tim3_binders/`: TIM-3 scFvs labelled by matching to the 30 Sanger-sequenced clones. `label_report.md` explains the labels; `labels/` holds the label tables; `fasta/` holds the labelled sequences; `representative_sets/` holds non-redundant strict-binder (`bind`) sets at 95, 96 and 97% protein identity and 99% DNA identity, each as a table of all candidates with their cluster and a FASTA of the representatives.
+- `bind_context` (and `expanded_bind_positive`, which includes it) is not evidence of binding: these scFvs are identical to one binding and one or two non-binding Sanger clones, and the call rests on sequence outside the scFv (see `label_report.md`).

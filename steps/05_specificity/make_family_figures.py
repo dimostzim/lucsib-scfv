@@ -266,7 +266,7 @@ def main() -> None:
         bin_labels=bin_labels1,
         sizes=sizes1,
         colors=colors1,
-        suptitle="Figure 1: R4 H460 PCNB-specific candidates (n=8,878)",
+        suptitle=f"Figure 1: R4 H460 PCNB-specific candidates (n={len(allseq):,})",
         out_path=outdir / "figure1_r4_h460pcnb_specific.png",
     )
 
@@ -296,7 +296,7 @@ def main() -> None:
         bin_labels=bin_labels2,
         sizes=sizes2,
         colors=colors2,
-        suptitle="Figure 2: All rounds / all targets (n=182,345; R2-R4)",
+        suptitle=f"Figure 2: All rounds / all targets (n={len(allrounds):,}; R2-R4)",
         out_path=outdir / "figure2_allrounds_alltargets.png",
         pca_by_target=True,
     )

@@ -51,6 +51,11 @@ run_step() {
   [[ "10#${step}" -ge "10#${FROM}" && "10#${step}" -le "10#${TO}" ]]
 }
 
+# a step always starts from an empty output folder, so no partial or older files are reused
+fresh_dir() {
+  rm -rf "$1"
+}
+
 if run_step 00; then
   echo "PROGRESS 0/8 step 00: inputs and tools"
   if [[ -f "${REPO_DIR}/.env" ]]; then
@@ -68,12 +73,14 @@ fi
 
 if run_step 01; then
   echo "PROGRESS 1/8 step 01: read QC"
+  fresh_dir "${QC_DIR}"
   bash "${REPO_DIR}/steps/01_qc/run_qc.sh" --input "${INPUTS}/reads" --output "${QC_DIR}" \
     --cpus "${QC_THREADS_PER_JOB}" --jobs "${QC_JOBS}" --image "${QC_IMAGE}"
 fi
 
 if run_step 02; then
   echo "PROGRESS 2/8 step 02: preprocessing"
+  fresh_dir "${PREPROCESS_DIR}"
   bash "${REPO_DIR}/steps/02_preprocess/run_preprocess.sh" --input "${QC_DIR}/2_filtered/reads" \
     --output "${PREPROCESS_DIR}" --germlines "${TOOLS}/germlines/dog" --orient igblast \
     --cpus "${CPUS}" --image "${SEQ2SCFV_IMAGE}"
@@ -81,6 +88,7 @@ fi
 
 if run_step 03; then
   echo "PROGRESS 3/8 step 03: annotation"
+  fresh_dir "${ANNOTATION_DIR}"
   bash "${REPO_DIR}/steps/03_annotate/run_seq2scfv.sh" --input-preprocessed "${PREPROCESS_DIR}" \
     --output-dir "${ANNOTATION_DIR}" --germlines "${TOOLS}/germlines/dog" --threads "${CPUS}" \
     --image "${SEQ2SCFV_IMAGE}"
@@ -88,18 +96,21 @@ fi
 
 if run_step 04; then
   echo "PROGRESS 4/8 step 04: count tables"
+  fresh_dir "${COUNT_TABLES_DIR}"
   bash "${REPO_DIR}/steps/04_count_tables/run_count_tables.sh" --annotation-dir "${ANNOTATION_DIR}" \
     --output-dir "${COUNT_TABLES_DIR}" --r-env "${TOOLS}/envs/r"
 fi
 
 if run_step 05; then
   echo "PROGRESS 5/8 step 05: specificity"
+  fresh_dir "${SPECIFICITY_DIR}"
   bash "${REPO_DIR}/steps/05_specificity/run_specificity.sh" --tables-dir "${COUNT_TABLES_DIR}/r_output/tables" \
     --samples-csv "${INPUTS}/samples.csv" --output-dir "${SPECIFICITY_DIR}" --python-env "${TOOLS}/envs/python"
 fi
 
 if run_step 06; then
   echo "PROGRESS 6/8 step 06: TIM-3 binders"
+  fresh_dir "${TIM3_DIR}"
   bash "${REPO_DIR}/steps/06_tim3_binders/run_tim3.sh" \
     --counts-tsv "${ANNOTATION_DIR}/7.Counts/in_frame_igBLAST_paired_delim_linker_scored_flags_counts.tsv" \
     --sanger-tsv "${INPUTS}/TIM-3_sanger_binding.tsv" --output-dir "${TIM3_DIR}" --python-env "${TOOLS}/envs/python"
@@ -107,8 +118,9 @@ fi
 
 if run_step 07; then
   echo "PROGRESS 7/8 step 07: collect results"
+  fresh_dir "${RESULTS_DIR}"
   "${TOOLS}/envs/python/bin/python" "${REPO_DIR}/steps/07_collect_results/collect_results.py" \
-    --work-dir "${WORK_DIR}" --output-dir "${RESULTS_DIR}"
+    --work-dir "${WORK_DIR}" --output-dir "${RESULTS_DIR}" --repo-dir "${REPO_DIR}"
 fi
 
 echo "PROGRESS 8/8 done"

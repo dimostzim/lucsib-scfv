@@ -73,7 +73,7 @@ def upload(args: argparse.Namespace, token: str) -> None:
             result = _request("PUT", f"{bucket}/{path.name}", token,
                               headers={"Content-Type": "application/octet-stream"},
                               data_stream=handle, length=size)
-        remote_md5 = result["checksum"].removeprefix("md5:")
+        remote_md5 = result["checksum"].split(":", 1)[-1]
         if remote_md5 != md5:
             sys.exit(f"{path.name}: checksum mismatch after upload (local {md5}, Zenodo {remote_md5})")
         print(f"{path.name}: uploaded, md5 {md5}", flush=True)

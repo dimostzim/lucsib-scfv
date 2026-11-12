@@ -1,4 +1,4 @@
-FROM condaforge/mambaforge:latest
+FROM condaforge/mambaforge:latest@sha256:050753d138b6708128c9bb45055a9d943f06363f32f63a96f7dd5f304ada52a6
 
 # Proxy settings (passed from build args)
 ARG HTTP_PROXY

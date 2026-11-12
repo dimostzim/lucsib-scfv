@@ -12,6 +12,7 @@ import argparse
 import csv
 import itertools
 import re
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,9 @@ MIN_SHARED_KMERS = 3
 TOP_REFS_PER_LABEL = 5
 MAX_EDITS_FOR_NP_MATCH = 100
 
+
+# full reads can be longer than the csv module's default field limit
+csv.field_size_limit(sys.maxsize)
 
 DNA_COMP = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 CIGAR_RE = re.compile(r"(\d+)([=XID])")
@@ -240,25 +244,6 @@ def load_sanger_refs() -> List[SangerRef]:
 
 
 def load_tim3_np_clones() -> List[NpClone]:
-    if COLLAPSED_TSV.exists():
-        clones = []
-        with COLLAPSED_TSV.open() as handle:
-            reader = csv.DictReader(handle, delimiter="\t")
-            for row in reader:
-                clones.append(
-                    NpClone(
-                        nt_scfv_id=row["nt_scfv_id"],
-                        aa_scfv_id=row["aa_scfv_id"],
-                        nt_scfv=row["nt_scfv"],
-                        aa_scfv=row["aa_scfv"],
-                        barcode02=int(row["barcode02"]),
-                        barcode03=int(row["barcode03"]),
-                        source_rows=int(row["source_rows"]),
-                    )
-                )
-        print(f"Loaded cached collapsed clones: unique_tim3_nt_scfv={len(clones)}", flush=True)
-        return sorted(clones, key=lambda c: (-c.tim3_reads, c.nt_scfv_id))
-
     clones: Dict[str, NpClone] = {}
     total_rows = tim3_rows = 0
     with COUNTS_TSV.open() as handle:

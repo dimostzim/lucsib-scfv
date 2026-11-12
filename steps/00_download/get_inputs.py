@@ -72,7 +72,7 @@ def main() -> None:
             if got != expected:
                 sys.exit(f"{name}: sha256 {got} does not match manifest {expected}")
         if name.endswith(".fastq.gz"):
-            target = reads / name.removesuffix(".gz")
+            target = reads / name[: -len(".gz")]
             tmp = target.with_name(target.name + ".part")
             with gzip.open(dest, "rb") as src, tmp.open("wb") as out:
                 shutil.copyfileobj(src, out, length=1 << 24)
