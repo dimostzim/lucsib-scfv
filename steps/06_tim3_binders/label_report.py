@@ -290,10 +290,10 @@ def write_report(summary: Sequence[dict], top_rows: Sequence[dict], conflicts: S
 
 For downstream analysis, use:
 
-- Strict bind-positive: `bind`
-- Expanded bind-positive: `bind + bind_context`
-- Negative: `no_bind`
-- Gray/excluded: `ambiguous + unknown`
+- Binder evidence: `bind` only (strict bind-positive).
+- Non-binders: `no_bind`.
+- Not evidence either way: `ambiguous`, `unknown` and `bind_context`. `bind_context` and the expanded set
+  (`bind + bind_context`, `expanded_bind_positive`) are kept for comparison with the earlier analysis only.
 
 ## Read Summary
 
