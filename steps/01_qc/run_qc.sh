@@ -318,10 +318,10 @@ process_sample() {
     fi
 
     outdir="${STAGE_CLEANED}/nanoplot/${sample}"
-    if [ ! -f "${outdir}/${sample}_NanoPlot-report.html" ]; then
+    if [ ! -f "${outdir}/${sample}_cleaned_NanoPlot-report.html" ]; then
         NanoPlot --fastq "$cleaned" \
             --outdir "$outdir" \
-            --prefix "${sample}_" \
+            --prefix "${sample}_cleaned_" \
             --threads "$THREADS" \
             --plots dot > "${outdir}.nanoplot.log" 2>&1
     fi
@@ -342,10 +342,10 @@ process_sample() {
     fi
 
     outdir="${STAGE_TRIMMED}/nanoplot/${sample}"
-    if [ ! -f "${outdir}/${sample}_NanoPlot-report.html" ]; then
+    if [ ! -f "${outdir}/${sample}_porechop_NanoPlot-report.html" ]; then
         NanoPlot --fastq "$trimmed" \
             --outdir "$outdir" \
-            --prefix "${sample}_" \
+            --prefix "${sample}_porechop_" \
             --threads "$THREADS" \
             --plots dot > "${outdir}.nanoplot.log" 2>&1
     fi
@@ -365,10 +365,10 @@ process_sample() {
     fi
 
     outdir="${STAGE_FILTERED}/nanoplot/${sample}"
-    if [ ! -f "${outdir}/${sample}_NanoPlot-report.html" ]; then
+    if [ ! -f "${outdir}/${sample}_filtlong_NanoPlot-report.html" ]; then
         NanoPlot --fastq "$filtered" \
             --outdir "$outdir" \
-            --prefix "${sample}_" \
+            --prefix "${sample}_filtlong_" \
             --threads "$THREADS" \
             --plots dot > "${outdir}.nanoplot.log" 2>&1
     fi
@@ -389,12 +389,12 @@ log_stage "STAGE 3"
 
 mkdir -p "${STAGE_MULTIQC}"
 
-# --dirs keeps the stage in the sample names; without it the three stages collide and only one is shown
+# NanoPlot prefixes name the stage (cleaned, porechop, filtlong); with the bare barcode the three stages
+# collide in MultiQC and only one is shown ("_trimmed" would be stripped by MultiQC, hence "porechop")
 multiqc \
     "${STAGE_CLEANED}/nanoplot" \
     "${STAGE_TRIMMED}/nanoplot" \
     "${STAGE_FILTERED}/nanoplot" \
-    --dirs --dirs-depth 3 \
     --outdir "${STAGE_MULTIQC}" \
     --title "Nanopore QC Report" \
     --filename multiqc_report \
