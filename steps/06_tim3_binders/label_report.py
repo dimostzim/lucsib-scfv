@@ -292,8 +292,8 @@ For downstream analysis, use:
 
 - Binder evidence: `bind` only (strict bind-positive).
 - Non-binders: `no_bind`.
-- Not evidence either way: `ambiguous`, `unknown` and `bind_context`. `bind_context` and the expanded set
-  (`bind + bind_context`, `expanded_bind_positive`) are kept for comparison with the earlier analysis only.
+- Not evidence either way: `ambiguous`, `unknown` and `bind_context`, and therefore also the expanded set
+  (`bind + bind_context`, `expanded_bind_positive`).
 
 ## Read Summary
 
