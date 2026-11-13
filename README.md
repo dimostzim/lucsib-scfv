@@ -24,7 +24,7 @@ adapted version of his R notebook from `covid-scfv-publication`. Both are downlo
 ## Running
 
 ```bash
-git clone <this repository> lucsib-scfv
+git clone git@github.com:dimostzim/lucsib-scfv.git
 cd lucsib-scfv
 cp .env.example .env && chmod 600 .env    # then put the Zenodo token in .env
 # edit WORK_DIR and CPUS in config/settings.env
