@@ -46,24 +46,21 @@ for var in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
   fi
 done
 
-echo "[1/5] seq2scfv source"
-checkout "${SEQ2SCFV_URL}" "${SEQ2SCFV_COMMIT}" "${TOOLS_DIR}/seq2scfv"
-
-echo "[2/5] seq2scfv Docker image"
+echo "[1/4] seq2scfv Docker image"
 docker build --network=host -t "${SEQ2SCFV_IMAGE}" \
   -f "${REPO_DIR}/envs/seq2scfv.Dockerfile" \
   --build-arg SEQ2SCFV_REPO="${SEQ2SCFV_URL}" \
   --build-arg SEQ2SCFV_COMMIT="${SEQ2SCFV_COMMIT}" \
   "${proxy_args[@]}" \
-  "${TOOLS_DIR}/seq2scfv/Docker"
+  "${REPO_DIR}/envs"
 
-echo "[3/5] QC Docker image"
+echo "[2/4] QC Docker image"
 docker build --network=host -t "${QC_IMAGE}" \
   -f "${REPO_DIR}/envs/qc.Dockerfile" \
   "${proxy_args[@]}" \
   "${REPO_DIR}/envs"
 
-echo "[4/5] Dog germline references"
+echo "[3/4] Dog germline references"
 checkout "${DOG_REF_URL}" "${DOG_REF_COMMIT}" "${TOOLS_DIR}/covid-scfv-publication"
 SRC="${TOOLS_DIR}/covid-scfv-publication/for_igblast"
 OUT_DIR="${TOOLS_DIR}/germlines/dog"
@@ -73,7 +70,7 @@ cp -a "${SRC}/databases/dog" "${OUT_DIR}/databases/"
 cp -a "${SRC}/optional_file/dog_gl.aux" "${OUT_DIR}/optional_file/"
 cp -a "${SRC}/internal_data/dog" "${OUT_DIR}/internal_data/"
 
-echo "[5/5] Conda environments"
+echo "[4/4] Conda environments"
 for env in r python; do
   env_dir="${TOOLS_DIR}/envs/${env}"
   yml_sha="$(sha256sum "${REPO_DIR}/envs/${env}.yml" | cut -d' ' -f1)"
