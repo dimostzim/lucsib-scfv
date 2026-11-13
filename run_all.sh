@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run the whole lucsib scFv pipeline: download inputs and tools, QC, preprocessing,
 # annotation, count tables, specificity analyses, TIM-3 binder analysis, results.
-# Settings: config/settings.env. Zenodo token: .env (see .env.example).
+# Settings: config/settings.env. Zenodo token, if the inputs are downloaded: .env (see .env.example).
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,9 +61,7 @@ if run_step 00; then
   if [[ -f "${REPO_DIR}/.env" ]]; then
     set -a; source "${REPO_DIR}/.env"; set +a
   fi
-  draft_flag=()
-  [[ "${ZENODO_DRAFT}" == "1" ]] && draft_flag=(--draft)
-  python3 "${REPO_DIR}/steps/00_download/get_inputs.py" --record-id "${ZENODO_RECORD_ID}" "${draft_flag[@]}" \
+  python3 "${REPO_DIR}/steps/00_download/get_inputs.py" --record-id "${ZENODO_RECORD_ID}" \
     --manifest "${REPO_DIR}/config/inputs_sha256.tsv" --out-dir "${INPUTS}"
   bash "${REPO_DIR}/steps/00_download/get_tools.sh" --tools-dir "${TOOLS}" \
     --seq2scfv-url "${SEQ2SCFV_REPO_URL}" --seq2scfv-commit "${SEQ2SCFV_COMMIT}" \

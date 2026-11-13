@@ -5,7 +5,8 @@ Writes to OUT_DIR:
   downloads/<file>          the files as stored on Zenodo
   reads/barcodeXX.fastq     decompressed reads, input of step 01
   samples.csv, TIM-3_sanger_binding.tsv
-The access token is read from the ZENODO_ACCESS_TOKEN environment variable.
+Files already in OUT_DIR/downloads with the expected checksum are not downloaded. Downloading needs a
+Zenodo access token in the ZENODO_ACCESS_TOKEN environment variable.
 """
 
 from __future__ import annotations
@@ -39,19 +40,17 @@ def _download(url: str, token: str, dest: Path) -> None:
     tmp.rename(dest)
 
 
-def _file_url(record_id: str, name: str, draft: bool) -> str:
-    kind = "draft/files" if draft else "files"
-    return f"{API}/records/{record_id}/{kind}/{name}/content"
+def _file_url(record_id: str, name: str) -> str:
+    return f"{API}/records/{record_id}/files/{name}/content"
 
 
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--record-id", required=True)
-    p.add_argument("--draft", action="store_true", help="the record is an unpublished draft")
     p.add_argument("--manifest", type=Path, required=True, help="TSV with file and sha256 columns")
     p.add_argument("--out-dir", type=Path, required=True)
     args = p.parse_args()
-    token = os.environ["ZENODO_ACCESS_TOKEN"]
+    token = os.environ.get("ZENODO_ACCESS_TOKEN", "")
 
     with args.manifest.open() as handle:
         manifest = list(csv.DictReader(handle, delimiter="\t"))
@@ -66,8 +65,11 @@ def main() -> None:
         if dest.exists() and _sha256(dest) == expected:
             print(f"PROGRESS {i}/{len(manifest)} {name}: already downloaded", flush=True)
         else:
+            if not token:
+                sys.exit(f"{name} is missing from {downloads} or has a different checksum, and ZENODO_ACCESS_TOKEN "
+                         "is not set: put a Zenodo token in .env or the input files in that folder")
             print(f"PROGRESS {i}/{len(manifest)} {name}: downloading", flush=True)
-            _download(_file_url(args.record_id, name, args.draft), token, dest)
+            _download(_file_url(args.record_id, name), token, dest)
             got = _sha256(dest)
             if got != expected:
                 sys.exit(f"{name}: sha256 {got} does not match manifest {expected}")

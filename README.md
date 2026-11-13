@@ -4,8 +4,8 @@ Analysis of Nanopore sequencing of phage-display scFv libraries from the LUCSIB 
 tables and figures. Ten barcoded samples cover four selection targets (TIM-3, CEA5, H460 PCNB, huAEC) over
 panning rounds 2 to 4. scFvs are annotated against dog germline genes.
 
-This repository holds code only. The inputs (reads, sample sheet, TIM-3 Sanger table) are in a restricted Zenodo
-record and are downloaded by the pipeline; the results are added to the same record.
+This repository holds code only. The inputs (reads, sample sheet, TIM-3 Sanger table) and the results are in the
+restricted Zenodo record https://doi.org/10.5281/zenodo.24169294 (see [Input files](#input-files)).
 
 The annotation uses Mikolaj Kocikowski's updated fork of seq2scfv and his dog IgBLAST references, and step 04 is an
 adapted version of his R notebook from `covid-scfv-publication`. Both are downloaded at pinned commits
@@ -19,14 +19,26 @@ adapted version of his R notebook from `covid-scfv-publication`. Both are downlo
 - A full run took 6 h 09 min with 64 threads: about 3 h 40 min of it is the annotation (step 03).
 - Internet access to Zenodo, GitHub, conda-forge, bioconda and Docker Hub. Proxy variables in the environment are
   passed to the Docker builds.
-- A Zenodo access token that can read the input record.
+- The input files: Zenodo access to the record, or your own copies of the files (see [Input files](#input-files)).
+
+## Input files
+
+The 12 input files are listed with their checksums in `config/inputs_sha256.tsv`. Step 00 gets them in one of two
+ways:
+
+- **Zenodo access.** The record's files are restricted: ask the record owner (Dimosthenis Tzimotoudis) to share the
+  record with your Zenodo account. Then create a personal access token in your Zenodo account settings
+  (Applications, Personal access tokens) and put it in `.env`. Step 00 downloads the files.
+- **Your own copies.** Put the 12 files, with the same names, in `<WORK_DIR>/inputs/downloads/`. Step 00 checks their
+  checksums and does not need a token. If a file is missing or its checksum differs, step 00 downloads it, which
+  needs the token, and stops with a message if there is none.
 
 ## Running
 
 ```bash
 git clone git@github.com:dimostzim/lucsib-scfv.git
 cd lucsib-scfv
-cp .env.example .env && chmod 600 .env    # then put the Zenodo token in .env
+cp .env.example .env && chmod 600 .env    # then put the Zenodo token in .env (not needed with your own copies)
 # edit WORK_DIR and CPUS in config/settings.env
 bash run_all.sh                           # all steps; or e.g. --from 04 --to 07
 ```
