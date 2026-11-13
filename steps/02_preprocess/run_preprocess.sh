@@ -1,169 +1,56 @@
 #!/bin/bash
+# Convert each barcode FASTQ in --input to --output/<barcode>.fasta, reverse-complementing the reads that IgBLAST
+# aligns to the dog germline genes in reverse orientation.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PREPROCESS_DIR="${SCRIPT_DIR}"
-
-INPUT_DIR=""
-OUTPUT_DIR=""
-GERMLINE_DIR=""
-THREADS=8
-MIN_LEN=0
-MAX_LEN=0
-ORIENT="igblast"
-ANCHOR=""
-KEEP_IGBLAST=0
-FORCE=0
-SKIP_PREPROCESS=0
-SKIP_CLEAN=0
-
-SEQ2SCFV_IMAGE_NAME="lucsib-scfv-seq2scfv"
-ORGANISM="dog"
-IG_SEQTYPE="${IG_SEQTYPE:-Ig}"
-DOMAIN_SYSTEM="${DOMAIN_SYSTEM:-imgt}"
 
 usage() {
   cat <<'EOF'
 Usage:
-  bash steps/02_preprocess/run_preprocess.sh --input DIR --output DIR --germlines DIR [options]
-
-Pipeline steps:
-  1) preprocess_reads.sh (FASTQ -> FASTA with optional orientation)
-
-Options:
-  --input DIR                 Input FASTQ directory (required unless --skip-preprocess)
-  --output DIR                Output FASTA directory
-  --germlines DIR             Dog germline directory (staged by steps/00_download/get_tools.sh)
-  --image NAME                seq2scfv Docker image (default: lucsib-scfv-seq2scfv)
-  --cpus N                    Threads for IgBLAST (default: 8)
-  --threads N                 Alias for --cpus
-  --orient MODE               none | igblast (default: igblast)
-  --keep-igblast              Keep IgBLAST/debug files in output
-  --force                     Rebuild output FASTA even if present
-  --skip-preprocess           Skip step 1
-  --skip-clean                Skip cleanup of intermediate files
-  --help                      Show this help
-
-Environment overrides:
-  IG_SEQTYPE, DOMAIN_SYSTEM
+  bash steps/02_preprocess/run_preprocess.sh --input DIR --output DIR --germlines DIR --cpus N --image NAME
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --input)
-      INPUT_DIR="$2"; shift 2 ;;
-    --output)
-      OUTPUT_DIR="$2"; shift 2 ;;
-    --germlines)
-      GERMLINE_DIR="$2"; shift 2 ;;
-    --image)
-      SEQ2SCFV_IMAGE_NAME="$2"; shift 2 ;;
-    --cpus|--threads)
-      THREADS="$2"; shift 2 ;;
-    --orient)
-      ORIENT="$2"; shift 2 ;;
-    --anchor)
-      ANCHOR="$2"; shift 2 ;;
-    --min-len)
-      MIN_LEN="$2"; shift 2 ;;
-    --max-len)
-      MAX_LEN="$2"; shift 2 ;;
-    --keep-igblast)
-      KEEP_IGBLAST=1; shift ;;
-    --force)
-      FORCE=1; shift ;;
-    --skip-preprocess)
-      SKIP_PREPROCESS=1; shift ;;
-    --skip-clean)
-      SKIP_CLEAN=1; shift ;;
-    --help|-h)
-      usage; exit 0 ;;
-    *)
-      echo "ERROR: Unknown option: $1" >&2
-      usage
-      exit 1 ;;
+    --input) INPUT_DIR="$2"; shift 2 ;;
+    --output) OUTPUT_DIR="$2"; shift 2 ;;
+    --germlines) GERMLINE_DIR="$2"; shift 2 ;;
+    --cpus) THREADS="$2"; shift 2 ;;
+    --image) IMAGE="$2"; shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "ERROR: Unknown option: $1" >&2; usage; exit 1 ;;
   esac
 done
 
-if [[ "${ORIENT}" == "anchor" && -z "${ANCHOR}" ]]; then
-  echo "ERROR: --orient anchor requires --anchor" >&2
-  exit 1
-fi
+GERMLINE_DIR="$(realpath -e "${GERMLINE_DIR}")"
+# IgBLAST query and result of one barcode at a time, kept apart from the oriented FASTA files
+IGBLAST_DIR="${OUTPUT_DIR}/igblast"
+mkdir -p "${IGBLAST_DIR}"
+IGBLAST_DIR="$(realpath "${IGBLAST_DIR}")"
 
-if [[ "${SKIP_PREPROCESS}" != "1" ]]; then
-  if [[ -z "${INPUT_DIR}" ]]; then
-    echo "ERROR: --input is required unless --skip-preprocess is set." >&2
-    exit 1
-  fi
-  if [[ ! -d "${INPUT_DIR}" ]]; then
-    echo "ERROR: Input directory not found: ${INPUT_DIR}" >&2
-    exit 1
-  fi
-fi
-
-if [[ -z "${OUTPUT_DIR}" || -z "${GERMLINE_DIR}" ]]; then
-  echo "ERROR: --output and --germlines are required." >&2
-  exit 1
-fi
-
-mkdir -p "${OUTPUT_DIR}"
-
-echo "Pipeline config:"
-echo "  input: ${INPUT_DIR}"
-echo "  output: ${OUTPUT_DIR}"
-echo "  germlines: ${GERMLINE_DIR}"
-echo "  orient: ${ORIENT}"
-echo "  threads: ${THREADS}"
-echo "  min_len: ${MIN_LEN}"
-echo "  max_len: ${MAX_LEN}"
-echo "  image: ${SEQ2SCFV_IMAGE_NAME}"
-
-clean_intermediate_output() {
-  local out_dir="$1"
-  local before after removed
-  before=$(find "${out_dir}" -maxdepth 1 -type f \
-    \( -name '*.tmp.fasta' -o -name '*.igblast.tsv' -o -name '*.keep_ids.txt' -o -name '*.rc_ids.txt' -o -name '*.ambig_ids.txt' \) | wc -l)
-  if [[ "${before}" -eq 0 ]]; then
-    echo "No intermediate files to clean."
-    return
-  fi
-  find "${out_dir}" -maxdepth 1 -type f \
-    \( -name '*.tmp.fasta' -o -name '*.igblast.tsv' -o -name '*.keep_ids.txt' -o -name '*.rc_ids.txt' -o -name '*.ambig_ids.txt' \) -delete
-  after=$(find "${out_dir}" -maxdepth 1 -type f \
-    \( -name '*.tmp.fasta' -o -name '*.igblast.tsv' -o -name '*.keep_ids.txt' -o -name '*.rc_ids.txt' -o -name '*.ambig_ids.txt' \) | wc -l)
-  removed=$((before - after))
-  echo "Cleaned intermediate files: removed=${removed}, remaining=${after}"
-}
-
-if [[ "${SKIP_PREPROCESS}" != "1" ]]; then
-  echo "[1/2] Preprocessing reads"
-  READS_DIR="${INPUT_DIR}" \
-  OUT_DIR="${OUTPUT_DIR}" \
-  MIN_LEN="${MIN_LEN}" \
-  MAX_LEN="${MAX_LEN}" \
-  ORIENT="${ORIENT}" \
-  ANCHOR="${ANCHOR}" \
-  THREADS="${THREADS}" \
-  SEQ2SCFV_IMAGE_NAME="${SEQ2SCFV_IMAGE_NAME}" \
-  GERMLINE_DIR="${GERMLINE_DIR}" \
-  ORGANISM="${ORGANISM}" \
-  IG_SEQTYPE="${IG_SEQTYPE}" \
-  DOMAIN_SYSTEM="${DOMAIN_SYSTEM}" \
-  KEEP_IGBLAST="${KEEP_IGBLAST}" \
-  FORCE="${FORCE}" \
-    bash "${PREPROCESS_DIR}/preprocess_reads.sh"
-else
-  echo "[1/2] Skipped preprocessing"
-fi
-
-if [[ "${SKIP_CLEAN}" == "1" ]]; then
-  echo "[2/2] Skipped cleanup (--skip-clean)"
-elif [[ "${KEEP_IGBLAST}" == "1" ]]; then
-  echo "[2/2] Skipped cleanup (--keep-igblast keeps debug/intermediate files)"
-else
-  echo "[2/2] Cleaning intermediate files"
-  clean_intermediate_output "${OUTPUT_DIR}"
-fi
-
-echo "Pipeline finished."
+for fastq in "${INPUT_DIR}"/*.fastq; do
+  sample="$(basename "${fastq}" .fastq)"
+  echo "Orienting ${sample}"
+  python3 "${SCRIPT_DIR}/fastq_to_fasta.py" --input "${fastq}" --output "${IGBLAST_DIR}/${sample}.fasta"
+  # -organism dog reads the dog germline annotation from IgBLAST's internal_data folder
+  docker run --rm --init --user "$(id -u):$(id -g)" \
+    -v "${IGBLAST_DIR}:/work" \
+    -v "${GERMLINE_DIR}:/germ:ro" \
+    -v "${GERMLINE_DIR}/internal_data/dog:/igblast/ncbi-igblast-1.20.0/internal_data/dog:ro" \
+    "${IMAGE}" igblastn \
+    -germline_db_V /germ/databases/dog/dog_V \
+    -germline_db_D /germ/databases/dog/dog_D \
+    -germline_db_J /germ/databases/dog/dog_J \
+    -auxiliary_data /germ/optional_file/dog_gl.aux \
+    -organism dog -ig_seqtype Ig -domain_system imgt \
+    -num_alignments_V 1 -num_alignments_D 1 -num_alignments_J 1 \
+    -extend_align5end -extend_align3end \
+    -outfmt 19 -num_threads "${THREADS}" \
+    -query "/work/${sample}.fasta" -out "/work/${sample}.tsv"
+  python3 "${SCRIPT_DIR}/fastq_to_fasta.py" --input "${fastq}" --output "${OUTPUT_DIR}/${sample}.fasta" \
+    --igblast-tsv "${IGBLAST_DIR}/${sample}.tsv"
+  rm "${IGBLAST_DIR}/${sample}.fasta" "${IGBLAST_DIR}/${sample}.tsv"
+done
+rmdir "${IGBLAST_DIR}"
