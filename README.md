@@ -15,7 +15,7 @@ uses 30 Sanger-sequenced clones with known binding results to label the scFvs fo
 non-binders.
 
 This repository holds only code. The input files and the results are in a restricted Zenodo record,
-https://doi.org/10.5281/zenodo.24169294. The scFv annotation uses Mikolaj Kocikowski's updated fork of seq2scfv and
+https://doi.org/10.5281/zenodo.24169293. The scFv annotation uses Mikolaj Kocikowski's updated fork of seq2scfv and
 his dog germline references, and step 04 is adapted from his R notebook in `covid-scfv-publication`; both are
 downloaded at fixed versions.
 

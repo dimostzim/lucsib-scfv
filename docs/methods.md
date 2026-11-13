@@ -14,7 +14,7 @@ Ten barcoded libraries from one Nanopore run (flow cell FBD53635, run `20251008_
 (table in the README).
 
 `TIM-3_sanger_binding.tsv` holds 30 Sanger-sequenced TIM-3 clones, each labelled as binding (`yes`) or not
-binding (`no`). All inputs are in a restricted Zenodo record (https://doi.org/10.5281/zenodo.24169294); step 00
+binding (`no`). All inputs are in a restricted Zenodo record (https://doi.org/10.5281/zenodo.24169293); step 00
 downloads them, unless they are already in the work folder, and checks their SHA-256 checksums against
 `config/inputs_sha256.tsv`.
 
