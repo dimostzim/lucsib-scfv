@@ -1,3 +1,4 @@
 .env
+/work
 __pycache__/
 *.pyc

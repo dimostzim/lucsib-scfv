@@ -40,10 +40,11 @@ The pipeline needs 12 files, all in the Zenodo record:
 
 ## Results
 
-Step 07 copies the final tables and figures into `<WORK_DIR>/results/`, and the same files are in the results
-archive on Zenodo. They include 13 numbered figures, the count tables, the read counts through QC and annotation,
-the TIM-3 binder labels and sets, and the software versions of the run. `docs/results.md` describes every file
-and is copied into the results folder as `README.md`.
+Everything the pipeline makes goes into one work folder: by default `work/` inside the cloned repository (about 250
+GB), or another folder set as `WORK_DIR` in `config/settings.env`. Step 07 copies the final tables and figures into
+`work/results/`, and the same files are in the results archive on Zenodo. They include 13 numbered figures, the
+count tables, the read counts through QC and annotation, the TIM-3 binder labels and sets, and the software versions
+of the run. `docs/results.md` describes every file and is copied into the results folder as `README.md`.
 
 ## Analysis steps
 
@@ -87,7 +88,7 @@ Step 00 gets the input files in one of two ways:
 - **Zenodo access.** The files in the record are restricted. Ask the record owner (Dimosthenis Tzimotoudis) to share
   the record with your Zenodo account. Then create a personal access token in your Zenodo account settings
   (Applications, Personal access tokens) and put it in `.env`. Step 00 downloads the files.
-- **Your own copies.** Put the 12 files, with the same names, in `<WORK_DIR>/inputs/downloads/`. Step 00 checks their
+- **Your own copies.** Put the 12 files, with the same names, in `work/inputs/downloads/`. Step 00 checks their
   checksums and needs no token. If a file is missing or its checksum differs, step 00 downloads it, which needs the
   token, and stops with a message if there is none.
 
@@ -97,7 +98,7 @@ Step 00 gets the input files in one of two ways:
 git clone git@github.com:dimostzim/lucsib-scfv.git
 cd lucsib-scfv
 cp .env.example .env && chmod 600 .env    # the Zenodo token goes here (not needed with your own copies)
-# set WORK_DIR and CPUS in config/settings.env
+# set CPUS (and WORK_DIR, if not work/) in config/settings.env
 bash run_all.sh                           # all steps
 bash run_all.sh --from 04 --to 07         # only steps 04 to 07
 ```

@@ -35,6 +35,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# resolved to a real absolute path, so the Docker steps mount real folders
+WORK_DIR="$(cd "${REPO_DIR}" && mkdir -p "${WORK_DIR}" && realpath "${WORK_DIR}")"
 INPUTS="${WORK_DIR}/inputs"
 TOOLS="${WORK_DIR}/tools"
 QC_DIR="${WORK_DIR}/01_qc"
@@ -44,7 +46,6 @@ COUNT_TABLES_DIR="${WORK_DIR}/04_count_tables"
 SPECIFICITY_DIR="${WORK_DIR}/05_specificity"
 TIM3_DIR="${WORK_DIR}/06_tim3_binders"
 RESULTS_DIR="${WORK_DIR}/results"
-mkdir -p "${WORK_DIR}"
 
 run_step() {
   local step="$1"
