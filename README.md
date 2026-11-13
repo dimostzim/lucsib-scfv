@@ -14,7 +14,9 @@ adapted version of his R notebook from `covid-scfv-publication`. Both are downlo
 ## Requirements
 
 - Linux with Docker (the user must be able to run `docker`), conda, git and Python 3.8 or newer.
-- About 250 GB of disk for the work folder and 64 CPU threads (fewer works, more slowly).
+- About 250 GB of disk for the work folder, 64 CPU threads (fewer works, more slowly) and at least 64 GB of
+  memory (the count-table notebook in step 04 peaks at 56 GB).
+- A full run took 6 h 09 min with 64 threads: about 3 h 40 min of it is the annotation (step 03).
 - Internet access to Zenodo, GitHub, conda-forge, bioconda and Docker Hub. Proxy variables in the environment are
   passed to the Docker builds.
 - A Zenodo access token that can read the input record.
