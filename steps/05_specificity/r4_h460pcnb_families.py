@@ -1,319 +1,97 @@
 #!/usr/bin/env python3
-"""Sequence families in the R4 H460 PCNB-specific candidate set: plots and summary tables."""
+"""Clusters of the scFv DNA sequences with reads in H460 PCNB R4 (barcode09) and none in huAEC R4 (barcode12)."""
 
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.cluster import MiniBatchKMeans
 
 from common import (
-    ecdf,
-    ensure_dir,
+    bin_by_cluster,
+    binned_similarity,
+    count_cluster_sizes,
+    find_clusters,
     kmer_matrix,
+    nearest_similarity,
     pca_from_features,
-    similarity_heatmap_label,
-    similarity_heatmap_limits,
-    topk_neighbors_cosine,
 )
 
-
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Generate all-sequence colored PCA + heatmap + summary plots.")
-    p.add_argument("--candidates-csv", required=True, help="Path to candidates.csv")
-    p.add_argument("--outdir", required=True, help="Output directory")
-    p.add_argument("--present-col", default="barcode09", help="Abundance column")
-    p.add_argument("--kmer", type=int, default=5, help="k-mer size")
-    p.add_argument("--n-clusters", type=int, default=20, help="MiniBatchKMeans clusters")
-    p.add_argument("--heatmap-bins", type=int, default=140, help="Number of bins for all-seq heatmap")
-    p.add_argument("--seed", type=int, default=42, help="Random seed")
-    return p.parse_args()
+PRESENT = "barcode09"
+ABSENT = "barcode12"
+K = 5
+N_CLUSTERS = 20
+BATCH_SIZE = 2048
 
 
-def _cluster_colors(labels: np.ndarray) -> np.ndarray:
-    uniq = sorted(np.unique(labels).tolist())
-    cmap = plt.get_cmap("tab20")
-    color_map = {u: cmap(i % 20) for i, u in enumerate(uniq)}
-    return np.array([color_map[x] for x in labels], dtype=object)
-
-
-def _binned_similarity_heatmap(
-    x: np.ndarray,
-    labels: np.ndarray,
-    pc1: np.ndarray,
-    n_bins: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    n = x.shape[0]
-    n_bins = max(10, min(n_bins, n))
-    order = np.lexsort((pc1, labels))
-    chunks = np.array_split(order, n_bins)
-
-    bin_vecs = []
-    bin_major_labels = []
-    for idx in chunks:
-        if idx.size == 0:
-            continue
-        m = x[idx].mean(axis=0)
-        norm = np.linalg.norm(m)
-        if norm > 0:
-            m = m / norm
-        bin_vecs.append(m)
-
-        lab = labels[idx]
-        binc = np.bincount(lab.astype(int))
-        bin_major_labels.append(int(np.argmax(binc)))
-
-    if not bin_vecs:
-        return np.zeros((0, 0), dtype=np.float32), np.array([], dtype=np.int32)
-
-    b = np.vstack(bin_vecs).astype(np.float32)
-    sim = b @ b.T
-    sim = np.clip(sim, 0.0, 1.0)
-    np.fill_diagonal(sim, 1.0)
-
-    return sim, np.array(bin_major_labels, dtype=np.int32)
-
-
-def plot_pca(out: Path, pcs: np.ndarray, var: np.ndarray, labels: np.ndarray, counts: np.ndarray) -> None:
-    fig, ax = plt.subplots(figsize=(9, 7))
-    colors = _cluster_colors(labels)
-    sizes = 8 + 12 * np.log10(counts.astype(float) + 1.0)
-    ax.scatter(pcs[:, 0], pcs[:, 1], c=colors, s=sizes, alpha=0.72, edgecolors="none")
-    ax.set_title("All candidates PCA (colored by k-mer clusters)")
-    ax.set_xlabel(f"PC1 ({var[0] * 100:.2f}% variance)")
-    ax.set_ylabel(f"PC2 ({var[1] * 100:.2f}% variance)")
-    ax.grid(alpha=0.2)
-    fig.tight_layout()
-    fig.savefig(out, dpi=300)
-    plt.close(fig)
-
-
-def plot_ecdf(out: Path, nearest: np.ndarray) -> None:
-    x, y = ecdf(nearest[np.isfinite(nearest)])
-    fig, ax = plt.subplots(figsize=(9, 6))
-    ax.plot(x, y, lw=2, color="#be123c")
-    ax.set_title("All candidates nearest-neighbor similarity ECDF")
-    ax.set_xlabel("Nearest-neighbor cosine similarity")
-    ax.set_ylabel("Cumulative fraction")
-    ax.grid(alpha=0.2)
-    fig.tight_layout()
-    fig.savefig(out, dpi=300)
-    plt.close(fig)
-
-
-def plot_rank(out: Path, cluster_sizes: pd.DataFrame) -> None:
-    vals = cluster_sizes["cluster_size"].sort_values(ascending=False).to_numpy()
-    ranks = np.arange(1, len(vals) + 1)
-    fig, ax = plt.subplots(figsize=(9, 6))
-    ax.plot(ranks, vals, marker="o", ms=3, lw=1.3, color="#065f46")
-    ax.set_yscale("log")
-    ax.set_title("All candidates cluster size rank")
-    ax.set_xlabel("Cluster rank")
-    ax.set_ylabel("Cluster size (log scale)")
-    ax.grid(alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(out, dpi=300)
-    plt.close(fig)
-
-
-def _add_cluster_labels(ax: plt.Axes, bin_labels: np.ndarray) -> None:
-    """Add cluster boundary lines and cluster ID tick labels to a heatmap axis."""
-    if bin_labels.size < 2:
-        return
-    changes = np.where(np.diff(bin_labels) != 0)[0]
-    for c in changes:
-        pos = c + 0.5
-        ax.axhline(pos, color="white", lw=0.55, alpha=0.55)
-        ax.axvline(pos, color="white", lw=0.55, alpha=0.55)
-
-    # Compute midpoint of each cluster span for tick placement
-    boundaries = np.concatenate([[-1], changes, [bin_labels.size - 1]])
-    tick_pos = []
-    tick_labels = []
-    for i in range(len(boundaries) - 1):
-        start = boundaries[i] + 1
-        end = boundaries[i + 1]
-        mid = (start + end) / 2.0
-        tick_pos.append(mid)
-        tick_labels.append(str(bin_labels[int(start)]))
-    ax.set_xticks(tick_pos)
-    ax.set_xticklabels(tick_labels, fontsize=6, rotation=0)
-    ax.set_yticks(tick_pos)
-    ax.set_yticklabels(tick_labels, fontsize=6)
-
-
-def plot_heatmap(out: Path, sim: np.ndarray, bin_labels: np.ndarray) -> None:
-    fig, ax = plt.subplots(figsize=(9, 8))
-    vmin, vmax = similarity_heatmap_limits(sim)
-    im = ax.imshow(sim, cmap="inferno", vmin=vmin, vmax=vmax, interpolation="nearest", aspect="auto")
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label(similarity_heatmap_label())
-    ax.set_title("All candidates similarity heatmap (binned from full set)")
-    ax.set_xlabel("Cluster ID")
-    ax.set_ylabel("Cluster ID")
-    _add_cluster_labels(ax, bin_labels)
-
-    fig.tight_layout()
-    fig.savefig(out, dpi=300)
-    plt.close(fig)
-
-
-def plot_4panel(
-    out: Path,
-    pcs: np.ndarray,
-    var: np.ndarray,
-    labels: np.ndarray,
-    counts: np.ndarray,
-    nearest: np.ndarray,
-    cluster_sizes: pd.DataFrame,
-    sim_bin: np.ndarray,
-    bin_labels: np.ndarray,
-) -> None:
-    fig, axs = plt.subplots(2, 2, figsize=(15, 12))
-
-    # A: PCA
-    ax = axs[0, 0]
-    colors = _cluster_colors(labels)
-    sizes = 8 + 12 * np.log10(counts.astype(float) + 1.0)
-    ax.scatter(pcs[:, 0], pcs[:, 1], c=colors, s=sizes, alpha=0.72, edgecolors="none")
-    ax.set_title("A) PCA (all candidates, colored by clusters)")
-    ax.set_xlabel(f"PC1 ({var[0] * 100:.2f}% var)")
-    ax.set_ylabel(f"PC2 ({var[1] * 100:.2f}% var)")
-    ax.grid(alpha=0.2)
-
-    # B: ECDF
-    ax = axs[0, 1]
-    x, y = ecdf(nearest[np.isfinite(nearest)])
-    ax.plot(x, y, lw=2, color="#be123c")
-    ax.set_title("B) Nearest-neighbor similarity ECDF")
-    ax.set_xlabel("Nearest-neighbor cosine similarity")
-    ax.set_ylabel("Cumulative fraction")
-    ax.grid(alpha=0.2)
-
-    # C: Cluster rank
-    ax = axs[1, 0]
-    vals = cluster_sizes["cluster_size"].sort_values(ascending=False).to_numpy()
-    ranks = np.arange(1, len(vals) + 1)
-    ax.plot(ranks, vals, marker="o", ms=3, lw=1.3, color="#065f46")
-    ax.set_yscale("log")
-    ax.set_title("C) Cluster size rank")
-    ax.set_xlabel("Cluster rank")
-    ax.set_ylabel("Cluster size (log scale)")
-    ax.grid(alpha=0.25)
-
-    # D: Heatmap
-    ax = axs[1, 1]
-    vmin, vmax = similarity_heatmap_limits(sim_bin)
-    im = ax.imshow(sim_bin, cmap="inferno", vmin=vmin, vmax=vmax, interpolation="nearest", aspect="auto")
-    ax.set_title("D) Similarity heatmap (binned from all sequences)")
-    ax.set_xlabel("Cluster ID")
-    ax.set_ylabel("Cluster ID")
-    _add_cluster_labels(ax, bin_labels)
-    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label(similarity_heatmap_label())
-
-    fig.suptitle("R4 H460 PCNB-specific sequences: all-candidate summary", y=0.995, fontsize=14)
-    fig.tight_layout()
-    fig.savefig(out, dpi=300)
-    plt.close(fig)
+def load_candidates(input_csv: Path) -> pd.DataFrame:
+    """Unique sequences with reads in PRESENT and none in ABSENT, most reads first."""
+    df = pd.read_csv(input_csv, usecols=["nt_scFv", PRESENT, ABSENT])
+    df = df[df["nt_scFv"].notna() & (df["nt_scFv"] != "")]
+    agg = (
+        df.groupby("nt_scFv", as_index=False)[[PRESENT, ABSENT]]
+        .sum()
+        .sort_values([PRESENT, "nt_scFv"], ascending=[False, True])
+        .reset_index(drop=True)
+    )
+    cand = agg[(agg[PRESENT] > 0) & (agg[ABSENT] == 0)].reset_index(drop=True)
+    cand["seq_id"] = [f"seq_{i + 1:05d}" for i in range(len(cand))]
+    cand["seq_len"] = cand["nt_scFv"].str.len()
+    return cand
 
 
 def main() -> None:
-    args = parse_args()
-    outdir = ensure_dir(Path(args.outdir))
-    plot_dir = ensure_dir(outdir / "plots")
+    p = argparse.ArgumentParser()
+    p.add_argument("--input-csv", type=Path, required=True)
+    p.add_argument("--outdir", type=Path, required=True)
+    args = p.parse_args()
+    args.outdir.mkdir(parents=True, exist_ok=True)
 
-    cand = pd.read_csv(args.candidates_csv)
-    if len(cand) == 0:
-        raise SystemExit("No candidates found.")
-    if args.present_col not in cand.columns:
-        raise SystemExit(f"Missing present column: {args.present_col}")
-
-    seqs = cand["nt_scFv"].astype(str).tolist()
-    x = kmer_matrix(seqs, k=args.kmer, l2_normalize=True)
-
-    pcs, var = pca_from_features(x, n_components=2)
-
-    km = MiniBatchKMeans(
-        n_clusters=args.n_clusters,
-        random_state=args.seed,
-        n_init=10,
-        batch_size=2048,
-        max_iter=300,
-    )
-    labels = km.fit_predict(x).astype(np.int32)
-
-    _, nearest = topk_neighbors_cosine(x, top_k=1, chunk_size=512)
-
-    cluster_sizes = (
-        pd.DataFrame({"cluster_id": labels})
-        .groupby("cluster_id", as_index=False)
-        .size()
-        .rename(columns={"size": "cluster_size"})
-        .sort_values("cluster_size", ascending=False)
-        .reset_index(drop=True)
-    )
-
-    sim_bin, bin_labels = _binned_similarity_heatmap(
-        x=x,
-        labels=labels,
-        pc1=pcs[:, 0],
-        n_bins=args.heatmap_bins,
-    )
-
-    out_assign = cand[["seq_id", "nt_scFv", "seq_len", args.present_col]].copy()
-    out_assign["cluster_id"] = labels
-    out_assign["PC1"] = pcs[:, 0]
-    out_assign["PC2"] = pcs[:, 1]
-    out_assign["nearest_similarity"] = nearest
-    out_assign.to_csv(outdir / "allseq_assignments.csv", index=False)
-    cluster_sizes.to_csv(outdir / "allseq_cluster_sizes.csv", index=False)
-    pd.DataFrame(sim_bin).to_csv(outdir / "allseq_similarity_heatmap_binned.csv", index=False)
-
-    counts = cand[args.present_col].to_numpy(dtype=float)
-    plot_pca(plot_dir / "plot_01_allseq_pca_colored.png", pcs=pcs, var=var, labels=labels, counts=counts)
-    plot_ecdf(plot_dir / "plot_02_allseq_nn_similarity_ecdf.png", nearest=nearest)
-    plot_rank(plot_dir / "plot_03_allseq_cluster_size_rank.png", cluster_sizes=cluster_sizes)
-    plot_heatmap(plot_dir / "plot_04_allseq_similarity_heatmap_binned.png", sim=sim_bin, bin_labels=bin_labels)
-    plot_4panel(
-        plot_dir / "plot_00_allseq_summary_4panel.png",
-        pcs=pcs,
-        var=var,
-        labels=labels,
-        counts=counts,
-        nearest=nearest,
-        cluster_sizes=cluster_sizes,
-        sim_bin=sim_bin,
-        bin_labels=bin_labels,
-    )
-
-    summary_lines = [
-        "pipeline=r4_h460pcnb_families",
-        f"candidates_csv={Path(args.candidates_csv).resolve()}",
+    cand = load_candidates(args.input_csv)
+    counts = cand[PRESENT].to_numpy()
+    lengths = cand["seq_len"].to_numpy()
+    candidates_summary = [
+        f"filter={PRESENT}>0 and {ABSENT}==0",
         f"n_candidates={len(cand)}",
-        f"kmer={args.kmer}",
-        f"n_clusters={args.n_clusters}",
-        f"heatmap_bins={sim_bin.shape[0]}",
+        f"total_present_reads={int(counts.sum())}",
+        f"median_present_reads={float(np.median(counts)):.3f}",
+        f"max_present_reads={int(counts.max())}",
+        f"len_min={int(lengths.min())}",
+        f"len_median={float(np.median(lengths)):.3f}",
+        f"len_max={int(lengths.max())}",
+    ]
+    (args.outdir / "candidates_summary.txt").write_text("\n".join(candidates_summary) + "\n", encoding="utf-8")
+
+    x = kmer_matrix(cand["nt_scFv"].tolist(), K)
+    pcs, var = pca_from_features(x)
+    cluster_ids = find_clusters(x, N_CLUSTERS, BATCH_SIZE)
+    nearest = nearest_similarity(x)
+    bins, _ = bin_by_cluster(cluster_ids, pcs[:, 0])
+    sim = binned_similarity(x, bins)
+
+    out = cand[["seq_id", "nt_scFv", "seq_len", PRESENT]].copy()
+    out["cluster_id"] = cluster_ids
+    out["PC1"] = pcs[:, 0]
+    out["PC2"] = pcs[:, 1]
+    out["nearest_similarity"] = nearest
+    out.to_csv(args.outdir / "allseq_assignments.csv", index=False)
+    count_cluster_sizes(cluster_ids).to_csv(args.outdir / "allseq_cluster_sizes.csv", index=False)
+    pd.DataFrame(sim).to_csv(args.outdir / "allseq_similarity_heatmap_binned.csv", index=False)
+
+    summary = [
+        "pipeline=r4_h460pcnb_families",
+        f"n_candidates={len(cand)}",
+        f"kmer={K}",
+        f"n_clusters={N_CLUSTERS}",
+        f"heatmap_bins={sim.shape[0]}",
         f"pca_var_pc1={float(var[0]):.6f}",
         f"pca_var_pc2={float(var[1]):.6f}",
-        f"nearest_similarity_median={float(np.median(nearest[np.isfinite(nearest)])):.6f}",
-        f"nearest_similarity_q90={float(np.quantile(nearest[np.isfinite(nearest)], 0.9)):.6f}",
-        f"outputs_dir={outdir.resolve()}",
+        f"nearest_similarity_median={float(np.median(nearest)):.6f}",
+        f"nearest_similarity_q90={float(np.quantile(nearest, 0.9)):.6f}",
     ]
-    (outdir / "summary_allseq.txt").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
-
-    params = vars(args)
-    params["n_candidates"] = int(len(cand))
-    (outdir / "params_allseq.json").write_text(json.dumps(params, indent=2) + "\n", encoding="utf-8")
-
-    print(f"R4 H460 PCNB family analysis complete: {outdir}")
+    (args.outdir / "summary_allseq.txt").write_text("\n".join(summary) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
