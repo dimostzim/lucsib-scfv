@@ -1,44 +1,26 @@
 ---
 title: "scfv_analysis"
 author: "Mikolaj Kocikowski"
-date: "2026-01-20"
 output: html_document
+params:
+  annotation_dir: ""
 ---
 
 
 ```{r preparing-the-environment}
 
-# GLOBAL PARAMETERS
-
-# Required packages
 library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(circlize)
 library(viridis)
-library(corrplot)
-library(reshape2)
 library(ggalluvial)
 library(ggpubr)
 library(pheatmap)
-library(tibble)
 library(uwot)
-library(svglite)
-library(readr)
 
-
-# Sample names to be analyzed (one per line in file) - must match colnames in df
-sample_cols <- readLines("scfv_extraction_output/focus_libs.txt")
-
-# Manual reordering to have naive library controls moved to the front (if present)
-priority <- intersect(c("OG_LIB", "NEW_LIB"), sample_cols)
-sample_cols <- c(priority, setdiff(sample_cols, priority))
-
-# manual samples
-# sample_cols <- c("COV_S1_R1", "COV_S1_R2", "COV_S1_R3", "COV_S1_R4")
-
-# Grouping vector - same length as sample_cols - for grouping samples - not in use currently
-# grouping_vector <- c("A", "A", "B", "B")
+# Sample names (one per line); each is a count column of the annotation table
+sample_cols <- readLines(file.path(params$annotation_dir, "focus_libs.txt"))
 
 # Inferred linker - used for scfv space mapping - assumed constant for all scFvs
 SCFV_LINKER_AA <- "EGKSSGASGESKVDDA"
@@ -55,9 +37,7 @@ OUTPUT_DIRS <- c(
 )
 
 for (d in OUTPUT_DIRS) {
-  if (!dir.exists(d)) {
-    dir.create(d, recursive = TRUE)
-  }
+  dir.create(d, recursive = TRUE, showWarnings = FALSE)
 }
 
 
@@ -66,51 +46,28 @@ for (d in OUTPUT_DIRS) {
 
 ```{r loading-raw-data}
 
-# Load Seq2scFv output & library names
-seq2scFv_output <- "scfv_extraction_output/in_frame_igBLAST_paired_delim_linker_scored_flags_counts.tsv"
-libs <- "scfv_extraction_output/focus_libs.txt"
-
 df <- read.table(
-  seq2scFv_output,
+  file.path(params$annotation_dir, "7.Counts", "in_frame_igBLAST_paired_delim_linker_scored_flags_counts.tsv"),
   fill = TRUE,
   header = TRUE,
   sep = "\t",
   row.names = NULL
 )
 
-focus_libs <- read.table(libs)$V1
-
-# Keep only libraries that are present in the loaded table.
-missing_focus <- setdiff(focus_libs, colnames(df))
-if (length(missing_focus) > 0) {
-  warning("Dropping missing libraries from focus list: ", paste(missing_focus, collapse = ", "))
-}
-focus_libs <- setdiff(focus_libs, missing_focus)
-
-missing_samples <- setdiff(sample_cols, colnames(df))
-if (length(missing_samples) > 0) {
-  warning("Dropping missing samples: ", paste(missing_samples, collapse = ", "))
-}
-sample_cols <- setdiff(sample_cols, missing_samples)
-
-if (length(focus_libs) == 0 || length(sample_cols) == 0) {
-  stop("No valid sample columns found in seq2scFv output.")
-}
-
 ```
 
 
 ```{r filtering-the-data}
 
-# Original (OG) filters with default settings - removing sequences with incorrect VH-VL order, bad linkers, NA in quality score 
-filt_df_og <- df[!is.na(df$total_nt_qual), ] %>%
+# Default filters: VH is the first domain, linker identity >= 75%, at most 2 linker mismatches, at most 10 extra linker amino acids
+filt_df_default <- df %>%
   filter(VH_IGH == 1,
          score_pcnt >= 75,
          mismatches <= 2,
          linker_overhang <= 10)
 
-# some sequences with empty VH_cdr3_aa or VL_cdr3_aa slipped through the cracks; while potentially valid they can't be analyzed here
-filt_df <- filt_df_og %>%
+# Sequences without a VH or VL CDR3 cannot be collapsed by CDR3
+filt_df <- filt_df_default %>%
   filter(
     VH_cdr3_aa != "",
     VL_cdr3_aa != ""
@@ -121,30 +78,22 @@ filt_df <- filt_df_og %>%
 
 ```{r collapsing-the-sequences}
 
+count_cols <- c(sample_cols, "total_nt_qual")
+
 # Collapse the sequences based on identical VH & VL (aa level)
 VH_VL <- filt_df %>%
   group_by(VH_sequence_alignment_aa, VL_sequence_alignment_aa) %>%
-  summarise(across(focus_libs[1]:total_nt_qual, sum), .groups = "drop")
+  summarise(across(all_of(count_cols), sum), .groups = "drop")
 
 # Collapse the sequences based on identical HCDR3 and LCDR3 (aa level)
 CDR3s <- filt_df %>%
   group_by(VH_cdr3_aa, VL_cdr3_aa) %>%
-  summarise(across(focus_libs[1]:total_nt_qual, sum), .groups = "drop")
+  summarise(across(all_of(count_cols), sum), .groups = "drop")
 
 # Collapse the sequences based on identical HCDR3 (aa level)
 HCDR3 <- filt_df %>%
   group_by(VH_cdr3_aa) %>%
-  summarise(across(focus_libs[1]:total_nt_qual, sum), .groups = "drop")
-
-# Most entries appear only once even after collapsing; these are low-trust, since there is no enrichment process visible
-VH_VL_nonone <- VH_VL %>%
-  filter(total_nt_qual > 1)
-
-CDR3s_nonone <- CDR3s %>%
-  filter(total_nt_qual > 1)
-
-HCDR3_nonone <- HCDR3 %>%
-  filter(total_nt_qual > 1)
+  summarise(across(all_of(count_cols), sum), .groups = "drop")
 
 ```
 
@@ -154,90 +103,38 @@ write.csv(filt_df, "r_output/tables/filt_df.csv", row.names = FALSE)
 write.csv(VH_VL, "r_output/tables/VH_VL.csv", row.names = FALSE)
 write.csv(CDR3s, "r_output/tables/CDR3s.csv", row.names = FALSE)
 write.csv(HCDR3, "r_output/tables/HCDR3.csv", row.names = FALSE)
-write.csv(VH_VL_nonone, "r_output/tables/VH_VL_nonone.csv", row.names = FALSE)
-write.csv(CDR3s_nonone, "r_output/tables/CDR3s_nonone.csv", row.names = FALSE)
-write.csv(HCDR3_nonone, "r_output/tables/HCDR3_nonone.csv", row.names = FALSE)
 
 ```
 
 
-```{r attrition-table-of-collapse}
+```{r attrition-table}
 
-# building a table showing how many sequences are left after certain filtering and collapsing steps in R (attrition table)
-
-# store datasets and labels in a named list
-datasets <- list(
-  "Raw input data" = df,
-  "Default-filtered raw data" = filt_df_og,
-  "Non-empty HCDR3 and LCDR3" = filt_df,
-  "Collapsed by VH and VL sequences" = VH_VL,
-  "Collapsed by both CDR3s (VH and VL)" = CDR3s,
-  "Collapsed by HCDR3" = HCDR3,
-  "...VH & VL with total count > 1" = VH_VL_nonone,
-  "...CDR3s with total count > 1" = CDR3s_nonone,
-  "...HCDR3 with total count > 1" = HCDR3_nonone
+# The annotation attrition table ends with the validated scFvs (the rows of df);
+# continue it with the rows left after each filter and collapse
+attrition_r <- c(
+  "Default-filtered raw data" = nrow(filt_df_default),
+  "Non-empty HCDR3 and LCDR3" = nrow(filt_df),
+  "Collapsed by VH and VL sequences" = nrow(VH_VL),
+  "Collapsed by both CDR3s (VH and VL)" = nrow(CDR3s),
+  "Collapsed by HCDR3" = nrow(HCDR3),
+  "...VH & VL with total count > 1" = sum(VH_VL$total_nt_qual > 1),
+  "...CDR3s with total count > 1" = sum(CDR3s$total_nt_qual > 1),
+  "...HCDR3 with total count > 1" = sum(HCDR3$total_nt_qual > 1)
 )
 
-# build attrition table
-attrition_table_r <- data.frame(
-  Step = names(datasets),
-  Rows = sapply(datasets, nrow),
-  row.names = NULL
+merged_attr <- rbind(
+  read.delim(file.path(params$annotation_dir, "8.Attrition", "attrition_table.tsv"), col.names = c("Stage", "Count")),
+  data.frame(Stage = names(attrition_r), Count = unname(attrition_r))
 )
 
-# Export the table to CSV
-write.csv(attrition_table_r,
-          "r_output/tables/attrition_table_r.csv",
-          row.names = FALSE)
-
-attrition_table_r
-
-```
-
-
-```{r removing-dfs}
-
-# Remove dfs that are no longer needed to free up RAM
-rm(df)
-rm(filt_df_og)
-gc()
-```
-
-
-```{r merged-attrition-table}
-
-# merging the R attrition table with the one generated from seq2scfv output files
-
-# read TSV, skip first line (header)
-attr_1 <- read.table(
-  "scfv_extraction_output/attrition_table.tsv",
-  sep = "\t",
-  header = FALSE,
-  stringsAsFactors = FALSE,
-  skip = 1
-)
-
-# read CSV, skip first line (header) and second line (the same as last of the other table)
-attr_2 <- read.csv(
-  "r_output/tables/attrition_table_r.csv",
-  header = FALSE,
-  stringsAsFactors = FALSE,
-  skip = 2
-)
-
-# combine tables
-merged_attr <- rbind(attr_1, attr_2)
-
-# set new column names
-colnames(merged_attr) <- c("Stage", "Count")
-
-# Export the table to CSV
 write.csv(merged_attr,
           "r_output/tables/attrition_merged.csv",
           row.names = FALSE)
 
-# print the result
 merged_attr
+
+# Free memory for the sequence map
+rm(df, filt_df_default)
 
 ```
 
@@ -300,24 +197,15 @@ ggsave(filename = "r_output/barplots/scfv_counts.png",
        plot = last_plot(),
        dpi = 300)
 ```
-Effective Shannon Diversity summarizes how many clones are present and how evenly they are represented, making it a good single-number measure of library collapse under selection. In other words it tells me whether my library is broad or dominated by a few clones. Compared to simple ratios, it is also robust to sequencing depth differences, which makes it useful for comparing panning rounds.
+Effective Shannon diversity of a sample is the exponential of the Shannon entropy of its VH & VL scFv frequencies: the number of equally common scFvs that would give the same entropy. It is high for a broad library and low for a library dominated by a few clones.
 
 ```{r effectve-shannon-diversity}
 
-effective_shannon <- numeric(length(sample_cols))
-
-for (i in seq_along(sample_cols)) {
-  counts <- VH_VL[[sample_cols[i]]]
-  counts <- counts[counts > 0]
-  
-  p <- counts / sum(counts)
-  
-  # Shannon entropy
-  shannon <- -sum(p * log(p))
-  
-  # Effective Shannon diversity
-  effective_shannon[i] <- exp(shannon)
-}
+effective_shannon <- sapply(sample_cols, function(s) {
+  counts <- VH_VL[[s]]
+  p <- counts[counts > 0] / sum(counts)
+  exp(-sum(p * log(p)))
+})
 
 # Build tidy dataframe for plotting
 div_df <- tibble(Sample = sample_cols, Effective_Shannon = effective_shannon)
@@ -336,8 +224,8 @@ ggplot(div_df, aes(
       hjust = 1, # modify if changing label angle
       vjust = 0.5 # modify if changing label angle
     ),
-    axis.line = element_line(size = 0.8),
-    axis.ticks = element_line(size = 0.8),
+    axis.line = element_line(linewidth = 0.8),
+    axis.ticks = element_line(linewidth = 0.8),
     plot.title = element_text(hjust = 0.5, face = "bold")
   )
 
@@ -394,87 +282,7 @@ ggsave(filename = "r_output/barplots/binned_counts_histogram.png",
 ```
 
 
-Here we use a function to generate individual plots of public clonotypes, for any input datasets, and with a number in the tile.
-
-```{r cooccurence-matrix}
-
-plot_scfv_cooccurrence <- function(input_df,
-                                   sample_cols,
-                                   remove_diagonal = TRUE,
-                                   df_name = NULL) {
-  # Convert to logical: TRUE if scFv is present (>0)
-  presence_mat <- input_df[, sample_cols] > 0
-  
-  # Compute co-occurrence matrix
-  cooccur_mat <- t(presence_mat) %*% presence_mat
-  
-  # Name rows and columns
-  rownames(cooccur_mat) <- colnames(cooccur_mat) <- sample_cols
-  
-  # OPTIONAL: remove diagonal
-  if (remove_diagonal) {
-    diag(cooccur_mat) <- NA
-  }
-
-  # Save it for stats
-  write.csv(cooccur_mat,
-          "r_output/tables/cooccur_mat.csv",
-          row.names = FALSE)
-  
-  # Convert to long
-  cooccur_long <- as.data.frame(cooccur_mat) %>%
-    mutate(Sample1 = rownames(cooccur_mat)) %>%
-    pivot_longer(-Sample1, names_to = "Sample2", values_to = "SharedSCFVs") %>%
-    mutate(Label = ifelse(is.na(SharedSCFVs), "NA", SharedSCFVs))
-  
-  # Plot
-  ggplot(cooccur_long, aes(x = Sample1, y = Sample2, fill = SharedSCFVs)) +
-    geom_tile(color = "white") +
-    # geom_text(aes(label = Label), size = 4) + # no space for printing values with high sample numbers
-    scale_fill_gradient(
-      low = "white",
-      high = "red",
-      space = "Lab",
-      name = "Shared scFvs",
-      na.value = "grey90"
-    ) +
-    labs(title = paste("Cooccurrence plot -", df_name)) +
-    theme_minimal(base_size = 5) +
-    theme(
-      axis.text.x = element_text(
-        angle = 45,
-        vjust = 1,
-        hjust = 1
-      ),
-      panel.border = element_rect(
-        color = "black",
-        fill = NA,
-        size = 0.8
-      )
-    ) +
-    coord_fixed()
-}
-
-
-##################### USAGE
-
-# Queue of dataset names the "noone" versions won't differ other than on the diagonal
-queue <- c("VH_VL", "CDR3s", "HCDR3")
-# queue <- c("VH_VL")
-
-for (name in queue) {
-  p <- plot_scfv_cooccurrence(get(name), sample_cols, TRUE, name)
-  print(p)
-  ggsave(
-    filename = paste0("r_output/cooccurence/Cooccurence_plot_", name, ".pdf"),
-    plot = p,
-    width = 4,
-    height = 4
-  )
-}
-
-```
-Here we make a heatmap of public clonotypes, but as a single-use code for a faceted figure, no numbers in the tiles (not enough space).
+Number of scFvs shared between each pair of samples, for each of the three collapses, with the count printed in each tile.
 
 ```{r cooccurence-faceted}
 
@@ -489,8 +297,8 @@ cooccur_all <- bind_rows(lapply(names(queue), function(name) {
   presence_mat <- input_df[, sample_cols] > 0
   cooccur_mat <- t(presence_mat) %*% presence_mat
   rownames(cooccur_mat) <- colnames(cooccur_mat) <- sample_cols
-  diag(cooccur_mat) <- NA  # remove diagonal values (somparison to the same sample)
-  
+  diag(cooccur_mat) <- NA  # remove diagonal values (comparison to the same sample)
+
   as.data.frame(cooccur_mat) %>%
     mutate(
       Sample1 = rownames(cooccur_mat),
@@ -499,23 +307,19 @@ cooccur_all <- bind_rows(lapply(names(queue), function(name) {
     pivot_longer(-c(Sample1, Dataset),
                  names_to = "Sample2",
                  values_to = "SharedSCFVs") %>%
-    mutate(Label = ifelse(is.na(SharedSCFVs), "NA", SharedSCFVs))
+    mutate(SharedSCFVs_plot = SharedSCFVs + 1) # pseudocount for the log colour scale
 }))
-
-# Prepare pseudocount column to enable using log in the plot coloring
-cooccur_all <- cooccur_all %>%
-  mutate(SharedSCFVs_plot = SharedSCFVs + 1)
 
 # Plot
 ggplot(cooccur_all, aes(x = Sample1, y = Sample2,  fill = SharedSCFVs_plot)) +
-  geom_tile(color = "grey60", size = 0.25) + # set to white to change the look of tile border
+  geom_tile(color = "grey60", linewidth = 0.25) + # set to white to change the look of tile border
   geom_text(aes(label = SharedSCFVs), size = 0.75, color = "black") +  # add values on the plot
   scale_fill_gradient(
     low = "white",
     high = "red",
     na.value = "grey90",
     trans = "log10", # log is used to make the results more visible despite one scale and varying count levels between facets
-    name = "Shared scFvs (+1, log10)" 
+    name = "Shared scFvs (+1, log10)"
   ) +
   labs(x = NULL, y = NULL) +
   facet_wrap( ~ Dataset, nrow = 1) +
@@ -549,7 +353,7 @@ ggsave(filename = "r_output/cooccurence/Cooccurence_faceted_numbers.png",
 
 ```
 
-Building a heatmap with clustering for one chosen df: VH_VL
+Samples clustered by the log number of VH & VL scFvs they share (written to PDF only).
 
 
 ```{r pheatmap}
@@ -559,32 +363,18 @@ Building a heatmap with clustering for one chosen df: VH_VL
 presence_mat <- VH_VL[, sample_cols] > 0
 cooccur_mat <- t(presence_mat) %*% presence_mat
 
-# Optional: hiding diagonal as its ofc high
-# diag(cooccur_mat) <- 0
-
-# prepating log data variant to visualize the whole range of abundances
+# log scale to show the whole range of shared counts
 cooccur_mat_log <- log10(cooccur_mat + 1)
 
-# pheatmap writes the PDF itself; drawing into a separately opened pdf() device produced an empty file
 pheatmap(
-  cooccur_mat_log, # log version of data
+  cooccur_mat_log,
+  color = colorRampPalette(c("white", "red"))(20),
+  border_color = "grey70",
   cellheight = 10,
   cellwidth  = 10,
-  display_numbers = FALSE, # numbers are confusing now that it log-ged data (and not just log fill like on the other plot)
-  number_format = "%.0f", # no decimals
-  number_color = "black",
-  colorRampPalette(c("white", "red"))(20), # color = viridis::plasma(100)
-  border_color = "grey70",
-  cluster_rows = TRUE,
-  cluster_cols = TRUE,
-  show_rownames = TRUE,
-  show_colnames = TRUE,
-  treeheight_row = 50,
   fontsize = 6,
-  fontsize_row = 6,
-  fontsize_col = 6,
   main = "ScFv co-occurrence, presence/absence-based (log (Count + 1)), dataset: VH_VL)",
-  # every barcode pair shares some scFvs, so a binary distance is 0 everywhere; cluster on the log shared counts instead
+  # every sample pair shares some scFvs, so a binary distance would be 0 everywhere; cluster on the log shared counts
   clustering_distance_rows = "euclidean",
   clustering_distance_cols = "euclidean",
   clustering_method = "ward.D2",
@@ -603,7 +393,7 @@ plot_scfv_dynamics <- function(df,
                                ref_sample,
                                top_n = 10,
                                epsilon = 1e-6) {
-  # Create synthetic (present in filtered df, but not in collapsed ones)
+  # Label each row with an ID
   df <- df %>% mutate(Clonotype = paste0("scFv_", row_number()))
 
   # Library size of each sample, so abundance is a share of that sample's reads
@@ -614,7 +404,7 @@ plot_scfv_dynamics <- function(df,
     arrange(desc(.data[[ref_sample]])) %>%
     slice_head(n = top_n) %>%
     pull(Clonotype)
-  
+
   # Pivot to long format
   plot_df_alluvial <- df %>%
     filter(Clonotype %in% top_clones) %>%
@@ -642,8 +432,8 @@ plot_scfv_dynamics <- function(df,
       fill = Clonotype
     )
   ) +
-    ggalluvial::geom_flow(width = 0.5, alpha = 0.8) +
-    ggalluvial::geom_stratum(width = 0.5, color = "black") +
+    geom_flow(width = 0.5, alpha = 0.8) +
+    geom_stratum(width = 0.5, color = "black") +
     scale_fill_viridis_d(option = "turbo") +
     scale_y_continuous(limits = c(0, 100), expand = c(0, 0)) +
     theme_pubr(legend = "right") +
@@ -655,8 +445,6 @@ plot_scfv_dynamics <- function(df,
       title = paste("Top", top_n, "scFvs from sample", ref_sample)
     )
 }
-
-####################### Usage
 
 # Loop over each sample as reference and save
 for (ref in sample_cols) {
@@ -673,36 +461,19 @@ for (ref in sample_cols) {
 ```
 
 
-```{r}
-# TEMPORARY: cleaning the environment to free up RAM, until I modularize
-
-# Save an object to a file
-saveRDS(filt_df, file = "filt_df.rds")
-
-# MAnually RM, clean env
-
-# Restore the object
-filt_df <- readRDS(file = "filt_df.rds")
-```
-
-
 ```{r umap-space}
 
-# Why UMAP? Tsne was too slow with this data size already.
-
-# Collapse sequences but keep the original sequence_id
-
+# Collapse identical scFv protein sequences (VH, linker, VL) and sum their counts per sample
 VH_VL_collapsed <- filt_df %>%
   mutate(
     scfv_seq = paste0(
       VH_sequence_alignment_aa,
       SCFV_LINKER_AA,
       VL_sequence_alignment_aa
-    ) # copied the infered linker sequence
+    )
   ) %>%
   group_by(scfv_seq) %>%
-  summarize(sequence_id = first(sequence_id),
-            across(all_of(sample_cols), \(x) sum(x, na.rm = TRUE)),
+  summarize(across(all_of(sample_cols), \(x) sum(x, na.rm = TRUE)),
             .groups = "drop")
 
 
@@ -717,10 +488,7 @@ scfv_long <- VH_VL_collapsed %>%
   filter(count > 0)
 
 
-# Create feature matrix (k-mers)
-
-# Why kmers instead of one-hot encoding? They capture similarity of motifs in varied sequences, while onehot requres aligned sequences of the same length.
-# #  Kmer size 3; modify to ger more merged or fragmented clusters and regulate the computing load
+# Feature matrix: k-mer frequencies of each scFv
 k <- 3
 
 kmerize <- function(seq, k = 3) {
@@ -740,40 +508,19 @@ emb <- t(sapply(unique_seqs, function(s) {
   as.numeric(tab / sum(tab))   # normalize
 }))
 
-# save object - takes a long compute to get it!
-saveRDS(emb, file = "emb_embedding.rds")
-
 # UMAP embedding
-
-n_neighbors <- min(15, nrow(emb) - 1)
 
 # fixed seed so the UMAP layout is the same on every run
 set.seed(42)
-um <- umap(emb, n_neighbors = n_neighbors, metric = "cosine")
-
-# save object - takes a long compute to get it!
-saveRDS(um, file = "um_umap.rds")
-
-```
-
-```{r preapare-umap-df}
-
-# if needed
-um <- readRDS(file = "um_umap.rds")
+um <- umap(emb, n_neighbors = 15, metric = "cosine")
 
 df_umap <- data.frame(scfv_seq = unique_seqs,
                       UMAP1 = um[, 1],
                       UMAP2 = um[, 2])
 
-# merge
-
 plot_df_umap <- scfv_long %>%
   left_join(df_umap, by = "scfv_seq")
 
-# save the DF - it is computationally heavy to produce
-  
-write.csv(plot_df_umap, "r_output/tables/plot_df_umap.csv", row.names = FALSE)
-  
 ```
 
 ```{r kde-plot}
@@ -787,7 +534,7 @@ ggplot(plot_df_umap, aes(UMAP1, UMAP2)) +
     alpha = 0.25,
     color = NA
   ) +
-  geom_jitter( # or geom_point
+  geom_jitter(
     aes(color = sample),
     size = 0.5,
     alpha = 0.6
@@ -815,57 +562,11 @@ ggsave(filename = "r_output/spaces/scFv_sequence_space_UMAP-KDE.png",
 ```
 
 
-```{r raster-per-sample}
-
-# choose samples
-# chosen_samples <- c("COV_S1_R2")
-chosen_samples <- sample_cols
-
-for (s in chosen_samples) {
-  p <- ggplot() +
-    geom_point(
-      data = plot_df_umap,
-      aes(UMAP1, UMAP2),
-      color = "grey90",
-      size = 0.2,
-      alpha = 0.2
-    ) +
-    
-    stat_density_2d(
-      data = plot_df_umap %>% filter(sample == s),
-      aes(UMAP1, UMAP2, fill = after_stat(density)),
-      geom = "raster",
-      contour = FALSE,
-      n = 200
-    ) +
-    
-    scale_fill_viridis_c() +
-    coord_equal() +
-    theme_classic() +
-    ggtitle(s)
-  
-  print(p)
-  
-  ggsave(
-    filename = paste0("r_output/spaces/UMAP_raster_", s, ".png"), # PDF and SVG not great here, because it is a raster image
-    plot = p,
-    width = 8,
-    height = 6,
-    dpi = 300
-  )
-}
-
-```
-
-
 ```{r raster-facets-reordered}
 
-# Facets follow the sample order of the run (barcode order)
-present_order <- sample_cols
-
+# Facets in sample order
 plot_df_umap_ordered <- plot_df_umap %>%
-  filter(sample %in% present_order) %>%
-  mutate(sample = factor(sample, levels = present_order))
+  mutate(sample = factor(sample, levels = sample_cols))
 
 p <- ggplot(plot_df_umap_ordered, aes(UMAP1, UMAP2)) +
   stat_density_2d(
@@ -892,7 +593,7 @@ print(p)
 
 ```{r chord-function}
 
-# Generalizing chord diagram to a function so I can run it for each sample
+# VH-VL V gene pairing of one sample, weighted by counts (left) and by presence (right)
 
 plot_chord <- function(df, sample_col) {
   # count-weighted
@@ -900,46 +601,27 @@ plot_chord <- function(df, sample_col) {
     group_by(VH_v_call, VL_v_call) %>%
     summarise(count = sum(.data[[sample_col]]), .groups = "drop") %>%
     filter(count > 0)
-  
+
   # presence / absence (unweighted)
   vh_vl_presence <- df %>%
     filter(.data[[sample_col]] > 0) %>%
     distinct(VH_v_call, VL_v_call) %>%
     mutate(count = 1)
-  
-  # SAFETY CHECKS - otherwise the function may stop and generate unreadable PDFs at samples with insufficient data
-  
-  if (nrow(vh_vl_counts) == 0 || nrow(vh_vl_presence) == 0) {
-    message("Skipping ", sample_col, ": no VH–VL pairs")
-    return(invisible(NULL))
-  }
-  
-  if (length(unique(vh_vl_counts$VH_v_call)) < 1 ||
-      length(unique(vh_vl_counts$VL_v_call)) < 1) {
-    message("Skipping ", sample_col, ": not enough sectors for chord diagram")
-    return(invisible(NULL))
-  }
-  
-  # define colors for VH and VL families; okay to base it on counts and not presence dataset but use for both if both contain the same families
+
+  # VH and VL gene colours, from the count-weighted pairs and used for both plots
   vh_families <- unique(vh_vl_counts$VH_v_call)
   vl_families <- unique(vh_vl_counts$VL_v_call)
-  
-  # VH families: viridis palette
   vh_colors <- setNames(viridis(length(vh_families), option = "rocket"), vh_families)
-  
-  # VL families: magma palette
   vl_colors <- setNames(viridis(length(vl_families), option = "mako"), vl_families)
-  
-  # merge colors
   grid_colors <- c(vh_colors, vl_colors)
-  
+
   # split plotting area
   par(
     mfrow = c(1, 2),
     mar = c(1, 1, 1, 1),
     oma = c(0, 0, 3, 0)
   ) # OMA needed for the main title
-  
+
   # weighted plot (Count)
   chordDiagram(
     vh_vl_counts[, c("VH_v_call", "VL_v_call", "count")],
@@ -948,9 +630,9 @@ plot_chord <- function(df, sample_col) {
     annotationTrack = c("grid"),
     preAllocateTracks = 1
   )
-  
+
   mtext("weighted (count-based)", side = 3, line = 0.5, cex = 1, outer = FALSE)
-  
+
   circos.track(
     track.index = 1,
     panel.fun = function(x, y) {
@@ -968,8 +650,8 @@ plot_chord <- function(df, sample_col) {
     },
     bg.border = NA
   )
-  
-  
+
+
   # unweighted plot (Presence-absence)
   chordDiagram(
     vh_vl_presence[, c("VH_v_call", "VL_v_call", "count")],
@@ -978,9 +660,9 @@ plot_chord <- function(df, sample_col) {
     annotationTrack = c("grid"),
     preAllocateTracks = 1
   )
-  
+
   mtext("unweighted (presence-absence)", side = 3, line = 0.5, cex = 1, outer = FALSE)
-  
+
   circos.track(
     track.index = 1,
     panel.fun = function(x, y) {
@@ -998,8 +680,8 @@ plot_chord <- function(df, sample_col) {
     },
     bg.border = NA
   )
-  
-  
+
+
   # Title for the entire plot
   mtext(
     paste("VH-VL pairings -", sample_col),
@@ -1007,32 +689,22 @@ plot_chord <- function(df, sample_col) {
     line = 1,
     cex = 1.2
   )
-  
+
   # reset circlize state
   circos.clear()
 }
 
 
-########################## USAGE
-
-# Use the function on any number of samples (count columns)
-samples <- sample_cols
-
-# overriding to test a few samples manually
-# samples <- c("COV_S1_R1", "COV_S1_R2", "COV_S1_R3", "COV_S1_R4")
-
-# Plot
-
-for (s in samples) {
-    # save the plot; it saves a file even if the function returned null due to security check (bad input)
-    pdf(
-    file = paste0("r_output/chords/chord_", s, ".pdf"), # careful with formats here
+# Save each sample's plot to PDF, then draw it again for the notebook (circlize draws directly and returns no plot object)
+for (s in sample_cols) {
+  pdf(
+    file = paste0("r_output/chords/chord_", s, ".pdf"),
     width = 12,
     height = 6
   )
   plot_chord(filt_df, s)
   dev.off()
-  plot_chord(filt_df, s) # display the plot; circlize does not return plots like normal ggplot to allow p <- function etc.
+  plot_chord(filt_df, s)
 }
 
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Render count_tables.Rmd on the annotation output. All outputs go to --output-dir:
-#   r_output/tables/   count tables, attrition tables, per-read filtered table (filt_df.csv)
+#   r_output/tables/   count tables, attrition table, per-read filtered table (filt_df.csv)
 #   r_output/*/        figures
 #   count_tables.html  rendered notebook
 set -euo pipefail
@@ -24,34 +24,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-COUNTS="${ANNOTATION_DIR}/7.Counts/in_frame_igBLAST_paired_delim_linker_scored_flags_counts.tsv"
-ATTRITION="${ANNOTATION_DIR}/8.Attrition/attrition_table.tsv"
-FOCUS_LIBS="${ANNOTATION_DIR}/focus_libs.txt"
-for f in "${COUNTS}" "${ATTRITION}" "${FOCUS_LIBS}"; do
-  if [[ ! -s "${f}" ]]; then
-    echo "ERROR: missing annotation output ${f}" >&2
-    exit 1
-  fi
-done
-
-# the notebook reads its inputs from scfv_extraction_output/ relative to the output directory
-mkdir -p "${OUTPUT_DIR}/scfv_extraction_output"
+mkdir -p "${OUTPUT_DIR}"
 OUTPUT_DIR="$(realpath "${OUTPUT_DIR}")"
-ln -sfn "$(realpath "${COUNTS}")" "${OUTPUT_DIR}/scfv_extraction_output/$(basename "${COUNTS}")"
-cp "${ATTRITION}" "${OUTPUT_DIR}/scfv_extraction_output/attrition_table.tsv"
-cp "${FOCUS_LIBS}" "${OUTPUT_DIR}/scfv_extraction_output/focus_libs.txt"
+ANNOTATION_DIR="$(realpath "${ANNOTATION_DIR}")"
 
 PATH="${R_ENV}/bin:${PATH}" "${R_ENV}/bin/Rscript" --vanilla -e "rmarkdown::render(
   input = '${SCRIPT_DIR}/count_tables.Rmd',
   output_dir = '${OUTPUT_DIR}',
   knit_root_dir = '${OUTPUT_DIR}',
-  intermediates_dir = '${OUTPUT_DIR}'
+  intermediates_dir = '${OUTPUT_DIR}',
+  params = list(annotation_dir = '${ANNOTATION_DIR}')
 )"
 
-for f in r_output/tables/VH_VL.csv r_output/tables/CDR3s.csv r_output/tables/HCDR3.csv r_output/tables/filt_df.csv; do
-  if [[ ! -s "${OUTPUT_DIR}/${f}" ]]; then
-    echo "ERROR: notebook did not write ${f}" >&2
-    exit 1
-  fi
-done
 echo "Count tables written to ${OUTPUT_DIR}"
