@@ -117,31 +117,3 @@ only downstream of the scFv (from clone-30 position 849 on, in the tag and gene 
 gaps and `N` calls in the Sanger reads). The `bind_context` call therefore rests on sequence outside the scFv and is
 not evidence that the scFv binds TIM-3. `expanded_bind_positive` (`bind` plus `bind_context`) inherits this.
 The representative sets use `bind` only.
-
-## Changes from the February to June 2026 analysis
-
-The pipeline reproduces the earlier analysis, with these differences:
-
-- barcode 5 now uses the complete read file; the earlier analysis used a copy cut off after 363,179 of 383,375
-  reads;
-- step 01 runs barcodes in parallel; the MultiQC report now contains all three QC stages (sample names collided
-  before, so it showed one); MultiQC is version 1.25.1 (the earlier report used 1.33, which cannot be installed
-  with the other pinned QC tools); MultiQC builds only the report;
-- step 03 no longer annotates the unoriented temporary FASTA copies left by preprocessing; these doubled the early
-  attrition counts (but not the per-barcode counts); the first attrition row now counts all reads (it was one too
-  low and labelled "Merged libraries");
-- step 04 no longer draws figures that depended on COVID-project sample names; the top-10 plots use each barcode's
-  own read total; the shared-scFv numbers are no longer shown plus one; the clustered heatmap is written correctly
-  and clusters by Euclidean distance; the UMAP has a fixed random seed;
-- step 06 includes the two steps (final labels with full-read context, and the labelled table with sequences)
-  whose code was not kept in the earlier analysis. They were rebuilt from the saved outputs. The 91% condition on the
-  `yes` clone is a rule that reproduces the saved labels exactly (422 `bind_context` clones, 52,406 reads); the
-  original threshold was not recorded, and other thresholds between 90.75% and 91.02% give the same result on the
-  earlier data;
-- step 06 resolves ties between equally good Sanger matches by shared k-mers and clone number; earlier the choice
-  depended on Python's random set ordering and could change between runs. On the earlier data the representative
-  sets and the label counts are reproduced exactly; the `no` clone reported for the context-tested sequences is now
-  clone 9 instead of the identical clone 17, and the cutoff-sensitivity table differs in 15 of 225 rows (all at a
-  margin of 0) by one clone;
-- the Python environment pins scikit-learn 1.8.0, which reproduces the earlier sequence families exactly
-  (version 1.9 groups about 10% of sequences differently).

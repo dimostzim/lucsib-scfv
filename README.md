@@ -42,7 +42,8 @@ The pipeline needs 12 files, all in the Zenodo record:
 
 Step 07 copies the final tables and figures into `<WORK_DIR>/results/`, and the same files are in the results
 archive on Zenodo. They include 13 numbered figures, the count tables, the read counts through QC and annotation,
-the TIM-3 binder labels and sets, and the software versions of the run; `results/README.md` describes every file.
+the TIM-3 binder labels and sets, and the software versions of the run. `docs/results.md` describes every file
+and is copied into the results folder as `README.md`.
 
 ## Analysis steps
 
@@ -68,8 +69,7 @@ the TIM-3 binder labels and sets, and the software versions of the run; `results
   and picks non-redundant sets of likely binders.
 - **07 Results.** Copies the final tables and figures into `results/`.
 
-`docs/methods.md` describes the methods and settings of each step, and how this pipeline differs from the earlier
-analysis of February to June 2026.
+`docs/methods.md` describes the methods and settings of each step.
 
 ## Running the pipeline
 

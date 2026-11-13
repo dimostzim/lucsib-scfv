@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Copy the final tables and figures from the work folder into one results folder.
 
-Large tables are gzip-compressed. Figures are numbered as in results/README.md.
+Large tables are gzip-compressed. Figures are numbered as in docs/results.md, which becomes results/README.md.
 Fails if any expected output is missing or empty.
 """
 
@@ -77,7 +77,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--work-dir", type=Path, required=True)
     p.add_argument("--output-dir", type=Path, required=True)
-    p.add_argument("--repo-dir", type=Path, required=True, help="pipeline repository, for provenance")
+    p.add_argument("--repo-dir", type=Path, required=True, help="pipeline repository")
     args = p.parse_args()
 
     missing = [src for src, _ in FILES if not (args.work_dir / src).is_file() or (args.work_dir / src).stat().st_size == 0]
@@ -95,7 +95,7 @@ def main() -> None:
             shutil.copyfile(args.work_dir / src, target)
     for src, dst in FOLDERS:
         shutil.copytree(args.work_dir / src, args.output_dir / dst, dirs_exist_ok=True)
-    shutil.copyfile(Path(__file__).with_name("results_README.md"), args.output_dir / "README.md")
+    shutil.copyfile(args.repo_dir / "docs" / "results.md", args.output_dir / "README.md")
 
     # provenance: pipeline commit, settings, input checksums and software versions
     prov = args.output_dir / "provenance"
