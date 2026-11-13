@@ -4,55 +4,19 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import textwrap
-from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence
+from typing import Dict, List, Sequence
 
+from common import read_tsv, write_tsv
 
-# Set from the command line in main()
-LABELS_TSV: Path
-COLLAPSED_TSV: Path
-SANGER_PAIRS_TSV: Path
-SANGER_TSV: Path
-OUT_DIR: Path
-FASTA_DIR: Path
 
 DIRECT_LABELS = ("bind", "bind_context", "no_bind", "ambiguous", "unknown")
 FASTA_LABELS = ("bind", "bind_context", "no_bind")
 
 
-def read_tsv(path: Path) -> List[dict]:
-    with path.open() as handle:
-        return list(csv.DictReader(handle, delimiter="\t"))
-
-
-def write_tsv(path: Path, rows: Sequence[dict], fieldnames: Sequence[str] | None = None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not rows and fieldnames is None:
-        path.write_text("")
-        return
-    if fieldnames is None:
-        fieldnames = list(rows[0].keys())
-    with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames, delimiter="\t")
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def wrap_fasta(seq: str, width: int = 80) -> Iterable[str]:
-    for i in range(0, len(seq), width):
-        yield seq[i : i + width]
-
-
 def write_fasta(path: Path, rows: Sequence[dict], seq_field: str, label: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as handle:
         for row in rows:
-            seq = row.get(seq_field, "")
-            if not seq:
-                continue
             header = (
                 f"{row['nt_scfv_id']}|label={label}|aa_id={row['aa_scfv_id']}|"
                 f"barcode02={row['barcode02']}|barcode03={row['barcode03']}|"
@@ -60,18 +24,16 @@ def write_fasta(path: Path, rows: Sequence[dict], seq_field: str, label: str) ->
                 f"best_no={row['best_no_clone']}"
             )
             handle.write(f">{header}\n")
-            for chunk in wrap_fasta(seq):
-                handle.write(f"{chunk}\n")
+            seq = row[seq_field]
+            for i in range(0, len(seq), 80):
+                handle.write(f"{seq[i : i + 80]}\n")
 
 
-def load_joined_rows() -> List[dict]:
-    labels = {row["nt_scfv_id"]: row for row in read_tsv(LABELS_TSV)}
-    collapsed = {row["nt_scfv_id"]: row for row in read_tsv(COLLAPSED_TSV)}
+def load_joined_rows(labels_tsv: Path, collapsed_tsv: Path) -> List[dict]:
+    collapsed = {row["nt_scfv_id"]: row for row in read_tsv(collapsed_tsv)}
     rows = []
-    for nt_id, label_row in labels.items():
-        seq_row = collapsed.get(nt_id)
-        if seq_row is None:
-            continue
+    for label_row in read_tsv(labels_tsv):
+        seq_row = collapsed[label_row["nt_scfv_id"]]
         row = dict(label_row)
         row["nt_scfv"] = seq_row["nt_scfv"]
         row["aa_scfv"] = seq_row["aa_scfv"]
@@ -105,45 +67,34 @@ def make_label_summary(rows: Sequence[dict]) -> List[dict]:
                 "tim3_reads": reads,
                 "clone_fraction": round(len(sub) / total_clones, 6),
                 "read_fraction": round(reads / total_reads, 6),
-                "barcode02_read_fraction": round(b02 / total_b02, 6) if total_b02 else 0,
-                "barcode03_read_fraction": round(b03 / total_b03, 6) if total_b03 else 0,
+                "barcode02_read_fraction": round(b02 / total_b02, 6),
+                "barcode03_read_fraction": round(b03 / total_b03, 6),
             }
         )
-    summary.append(
-        {
-            "label": "strict_bind_positive",
-            "clones": sum(1 for row in rows if row["final_label_margin05_context"] == "bind"),
-            "barcode02_reads": sum(row["barcode02"] for row in rows if row["final_label_margin05_context"] == "bind"),
-            "barcode03_reads": sum(row["barcode03"] for row in rows if row["final_label_margin05_context"] == "bind"),
-            "tim3_reads": sum(row["tim3_reads"] for row in rows if row["final_label_margin05_context"] == "bind"),
-            "clone_fraction": "",
-            "read_fraction": "",
-            "barcode02_read_fraction": "",
-            "barcode03_read_fraction": "",
-        }
-    )
-    expanded = [row for row in rows if row["final_label_margin05_context"] in {"bind", "bind_context"}]
-    summary.append(
-        {
-            "label": "expanded_bind_positive",
-            "clones": len(expanded),
-            "barcode02_reads": sum(row["barcode02"] for row in expanded),
-            "barcode03_reads": sum(row["barcode03"] for row in expanded),
-            "tim3_reads": sum(row["tim3_reads"] for row in expanded),
-            "clone_fraction": "",
-            "read_fraction": "",
-            "barcode02_read_fraction": "",
-            "barcode03_read_fraction": "",
-        }
-    )
+    for tier, tier_labels in (("strict_bind_positive", {"bind"}), ("expanded_bind_positive", {"bind", "bind_context"})):
+        sub = [row for row in rows if row["final_label_margin05_context"] in tier_labels]
+        summary.append(
+            {
+                "label": tier,
+                "clones": len(sub),
+                "barcode02_reads": sum(row["barcode02"] for row in sub),
+                "barcode03_reads": sum(row["barcode03"] for row in sub),
+                "tim3_reads": sum(row["tim3_reads"] for row in sub),
+                "clone_fraction": "",
+                "read_fraction": "",
+                "barcode02_read_fraction": "",
+                "barcode03_read_fraction": "",
+            }
+        )
     return summary
 
 
 def make_top_clones(rows: Sequence[dict], top_n: int = 25) -> List[dict]:
+    # rows are sorted by reads, so the first rows of each label are its top clones
     top_rows = []
     for label in DIRECT_LABELS:
         sub = [row for row in rows if row["final_label_margin05_context"] == label]
-        for rank, row in enumerate(sorted(sub, key=lambda r: (-r["tim3_reads"], r["nt_scfv_id"]))[:top_n], start=1):
+        for rank, row in enumerate(sub[:top_n], start=1):
             top_rows.append(
                 {
                     "label": label,
@@ -166,27 +117,21 @@ def make_top_clones(rows: Sequence[dict], top_n: int = 25) -> List[dict]:
     return top_rows
 
 
-def make_conflict_audit() -> List[dict]:
-    sanger_labels = {
-        row["clone_number"]: row["binding"]
-        for row in read_tsv(SANGER_TSV)
-    }
+def make_conflict_audit(sanger_pairs_tsv: Path) -> List[dict]:
     rows = []
-    for row in read_tsv(SANGER_PAIRS_TSV):
+    for row in read_tsv(sanger_pairs_tsv):
         if row["same_label"] != "False":
             continue
         identity = float(row["identity"])
-        clone_a_cov = float(row["clone_a_cov"])
-        clone_b_cov = float(row["clone_b_cov"])
-        if identity < 98.0 or min(clone_a_cov, clone_b_cov) < 90.0:
+        if identity < 98.0 or min(float(row["clone_a_cov"]), float(row["clone_b_cov"])) < 90.0:
             continue
         rows.append(
             {
                 "clone_a": row["clone_a"],
-                "binding_a": sanger_labels.get(row["clone_a"], row["binding_a"]),
+                "binding_a": row["binding_a"],
                 "len_a": row["len_a"],
                 "clone_b": row["clone_b"],
-                "binding_b": sanger_labels.get(row["clone_b"], row["binding_b"]),
+                "binding_b": row["binding_b"],
                 "len_b": row["len_b"],
                 "identity": row["identity"],
                 "clone_a_cov": row["clone_a_cov"],
@@ -221,7 +166,7 @@ def make_label_matrix(rows: Sequence[dict]) -> List[dict]:
 
 
 def make_full_table(rows: Sequence[dict]) -> List[dict]:
-    # One row per nt_scFv with its final label and sequences; input of diversity_sweep.py.
+    # One row per nt_scFv with its final label and sequences.
     return [
         {
             "nt_scfv_id": row["nt_scfv_id"],
@@ -240,40 +185,34 @@ def make_full_table(rows: Sequence[dict]) -> List[dict]:
     ]
 
 
-def write_exports(rows: Sequence[dict]) -> Dict[str, int]:
+def write_exports(rows: Sequence[dict], fasta_dir: Path) -> Dict[str, int]:
+    sets = {label: [row for row in rows if row["final_label_margin05_context"] == label] for label in FASTA_LABELS}
+    sets["expanded_bind_positive"] = sets["bind"] + sets["bind_context"]
+
     counts = {}
-    by_label = defaultdict(list)
-    for row in rows:
-        by_label[row["final_label_margin05_context"]].append(row)
-
-    for label in FASTA_LABELS:
-        sub = by_label[label]
-        write_fasta(FASTA_DIR / f"tim3_{label}_nt_scfv.fasta", sub, "nt_scfv", label)
-        write_fasta(FASTA_DIR / f"tim3_{label}_aa_scfv.fasta", sub, "aa_scfv", label)
+    for label, sub in sets.items():
+        write_fasta(fasta_dir / f"tim3_{label}_nt_scfv.fasta", sub, "nt_scfv", label)
+        write_fasta(fasta_dir / f"tim3_{label}_aa_scfv.fasta", sub, "aa_scfv", label)
         counts[label] = len(sub)
-
-    strict = by_label["bind"]
-    expanded = by_label["bind"] + by_label["bind_context"]
-    write_fasta(FASTA_DIR / "tim3_strict_bind_positive_nt_scfv.fasta", strict, "nt_scfv", "strict_bind_positive")
-    write_fasta(FASTA_DIR / "tim3_strict_bind_positive_aa_scfv.fasta", strict, "aa_scfv", "strict_bind_positive")
-    write_fasta(FASTA_DIR / "tim3_expanded_bind_positive_nt_scfv.fasta", expanded, "nt_scfv", "expanded_bind_positive")
-    write_fasta(FASTA_DIR / "tim3_expanded_bind_positive_aa_scfv.fasta", expanded, "aa_scfv", "expanded_bind_positive")
-    counts["strict_bind_positive"] = len(strict)
-    counts["expanded_bind_positive"] = len(expanded)
     return counts
 
 
-def markdown_table(rows: Sequence[dict], columns: Sequence[str], max_rows: int | None = None) -> str:
-    display = rows[:max_rows] if max_rows is not None else rows
+def markdown_table(rows: Sequence[dict], columns: Sequence[str]) -> str:
     lines = []
     lines.append("| " + " | ".join(columns) + " |")
     lines.append("|" + "|".join("---" for _ in columns) + "|")
-    for row in display:
+    for row in rows:
         lines.append("| " + " | ".join(str(row[col]) for col in columns) + " |")
     return "\n".join(lines)
 
 
-def write_report(summary: Sequence[dict], top_rows: Sequence[dict], conflicts: Sequence[dict], fasta_counts: Dict[str, int]) -> None:
+def write_report(
+    path: Path,
+    summary: Sequence[dict],
+    top_rows: Sequence[dict],
+    conflicts: Sequence[dict],
+    fasta_counts: Dict[str, int],
+) -> None:
     top_bind_like = [
         row for row in top_rows if row["label"] in {"bind", "bind_context", "no_bind", "ambiguous"}
     ][:20]
@@ -305,7 +244,7 @@ For downstream analysis, use:
 
 ## Top Clones
 
-{markdown_table(top_bind_like, ["label", "rank", "nt_scfv_id", "barcode02", "barcode03", "tim3_reads", "best_yes_clone", "best_no_clone", "confidence"], max_rows=20)}
+{markdown_table(top_bind_like, ["label", "rank", "nt_scfv_id", "barcode02", "barcode03", "tim3_reads", "best_yes_clone", "best_no_clone", "confidence"])}
 
 ## Sanger Conflict Audit
 
@@ -313,15 +252,14 @@ There are {len(conflicts)} opposite-label Sanger pairs with >=98% identity and >
 
 Top conflicts:
 
-{markdown_table(conflicts, ["clone_a", "binding_a", "clone_b", "binding_b", "identity", "clone_a_cov", "clone_b_cov", "severity"], max_rows=20)}
+{markdown_table(conflicts[:20], ["clone_a", "binding_a", "clone_b", "binding_b", "identity", "clone_a_cov", "clone_b_cov", "severity"])}
 
 ## FASTA Exports
 
-- `tim3_bind_nt_scfv.fasta` / `tim3_bind_aa_scfv.fasta`: {fasta_counts.get("bind", 0)} clones.
-- `tim3_bind_context_nt_scfv.fasta` / `tim3_bind_context_aa_scfv.fasta`: {fasta_counts.get("bind_context", 0)} clones.
-- `tim3_no_bind_nt_scfv.fasta` / `tim3_no_bind_aa_scfv.fasta`: {fasta_counts.get("no_bind", 0)} clones.
-- `tim3_strict_bind_positive_*`: {fasta_counts.get("strict_bind_positive", 0)} clones.
-- `tim3_expanded_bind_positive_*`: {fasta_counts.get("expanded_bind_positive", 0)} clones.
+- `tim3_bind_nt_scfv.fasta` / `tim3_bind_aa_scfv.fasta`: {fasta_counts["bind"]} clones.
+- `tim3_bind_context_nt_scfv.fasta` / `tim3_bind_context_aa_scfv.fasta`: {fasta_counts["bind_context"]} clones.
+- `tim3_no_bind_nt_scfv.fasta` / `tim3_no_bind_aa_scfv.fasta`: {fasta_counts["no_bind"]} clones.
+- `tim3_expanded_bind_positive_*`: {fasta_counts["expanded_bind_positive"]} clones.
 
 ## Files
 
@@ -331,40 +269,34 @@ Top conflicts:
 - `label_matrix_for_plotting.tsv`
 - `fasta/`
 """
-    (OUT_DIR / "TIM3_LABEL_REPORT.md").write_text(textwrap.dedent(report).strip() + "\n")
+    path.write_text(report.strip() + "\n")
 
 
 def main() -> None:
-    global LABELS_TSV, COLLAPSED_TSV, SANGER_PAIRS_TSV, SANGER_TSV, OUT_DIR, FASTA_DIR
     parser = argparse.ArgumentParser(description="TIM-3 label report and FASTA exports.")
     parser.add_argument("--analysis-dir", type=Path, required=True, help="output dir of the matching steps")
-    parser.add_argument("--sanger-tsv", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     args = parser.parse_args()
-    LABELS_TSV = args.analysis_dir / "tim3_labels_with_full_context_minreads10.tsv"
-    COLLAPSED_TSV = args.analysis_dir / "tim3_nanopore_nt_scfv_collapsed.tsv"
-    SANGER_PAIRS_TSV = args.analysis_dir / "tim3_sanger_vs_sanger.tsv"
-    SANGER_TSV, OUT_DIR = args.sanger_tsv, args.out_dir
-    FASTA_DIR = OUT_DIR / "fasta"
+    out_dir = args.out_dir
+    fasta_dir = out_dir / "fasta"
+    fasta_dir.mkdir(parents=True, exist_ok=True)
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    FASTA_DIR.mkdir(parents=True, exist_ok=True)
-
-    rows = load_joined_rows()
+    rows = load_joined_rows(
+        args.analysis_dir / "tim3_labels_with_full_context_minreads10.tsv",
+        args.analysis_dir / "tim3_nanopore_nt_scfv_collapsed.tsv",
+    )
     summary = make_label_summary(rows)
     top_rows = make_top_clones(rows)
-    conflicts = make_conflict_audit()
-    label_matrix = make_label_matrix(rows)
-    fasta_counts = write_exports(rows)
+    conflicts = make_conflict_audit(args.analysis_dir / "tim3_sanger_vs_sanger.tsv")
+    fasta_counts = write_exports(rows, fasta_dir)
 
-    write_tsv(OUT_DIR / "label_read_summary.tsv", summary)
-    write_tsv(OUT_DIR / "top_clones_by_label.tsv", top_rows)
-    write_tsv(OUT_DIR / "sanger_conflict_audit.tsv", conflicts)
-    write_tsv(OUT_DIR / "label_matrix_for_plotting.tsv", label_matrix)
-    write_tsv(OUT_DIR / "tim3_full_labeled_scfv_results_with_sequences.tsv", make_full_table(rows))
-    write_report(summary, top_rows, conflicts, fasta_counts)
-
-    print(f"Wrote final TIM-3 exports to {OUT_DIR}")
+    write_tsv(out_dir / "label_read_summary.tsv", summary)
+    write_tsv(out_dir / "top_clones_by_label.tsv", top_rows)
+    write_tsv(out_dir / "sanger_conflict_audit.tsv", conflicts)
+    write_tsv(out_dir / "label_matrix_for_plotting.tsv", make_label_matrix(rows))
+    write_tsv(out_dir / "tim3_full_labeled_scfv_results_with_sequences.tsv", make_full_table(rows))
+    write_report(out_dir / "TIM3_LABEL_REPORT.md", summary, top_rows, conflicts, fasta_counts)
+    print(f"Wrote final TIM-3 exports to {out_dir}")
 
 
 if __name__ == "__main__":
