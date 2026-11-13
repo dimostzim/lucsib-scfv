@@ -8,7 +8,7 @@ A "distinct scFv" is a unique pair of heavy and light chain protein sequences. L
 
 ## Figures (`figures/`)
 
-1. `01_H460PCNB_R4_sequence_families.png`: scFv DNA sequences found in H460 PCNB round 4 and not in huAEC round 4, grouped into 20 families by sequence similarity.
+1. `01_H460PCNB_R4_sequence_families.png`: scFv DNA sequences found in H460 PCNB round 4 and not in huAEC round 4, grouped into 20 families by sequence similarity (the `cluster` columns of the tables).
 2. `02_all_rounds_all_targets.png`: the same analysis on all scFv DNA sequences from rounds 2 to 4 of the four targets.
 3. `03_target_trajectories.png`: the average position of each target at each round on the map from figure 2.
 4. `04_CDR3_sharing_barcodes07-12.png`: how many heavy and light chain CDR3 pairs are found in only one H460 PCNB or huAEC round and how many are shared between rounds; teal bars are pairs found in both targets.
@@ -29,5 +29,5 @@ A "distinct scFv" is a unique pair of heavy and light chain protein sequences. L
 - `04_count_tables/`: read counts per barcode for each distinct scFv (`counts_heavy_light_pairs`), each heavy and light CDR3 pair (`counts_cdr3_pairs`) and each heavy CDR3 (`counts_heavy_cdr3`); `attrition_with_r_filters.csv` continues the attrition table through the filters of the count-table notebook; `count_tables_notebook.html` is the rendered notebook.
 - `05_specificity/r4_h460pcnb_families/`: the H460 PCNB round 4 candidates (present in H460 PCNB round 4, absent from huAEC round 4) with their family, map position and nearest-neighbour similarity; family sizes; family similarity matrix.
 - `05_specificity/all_rounds/`: the same for all sequences of rounds 2 to 4, plus each sample's average map position and the overlap (Jaccard index) between samples.
-- `06_tim3_binders/`: TIM-3 scFvs labelled by matching to the 30 Sanger-sequenced clones. `label_report.md` explains the labels; `labels/` holds the label tables; `fasta/` holds the labelled sequences; `representative_sets/` holds non-redundant strict-binder (`bind`) sets at 95, 96 and 97% protein identity and 99% DNA identity, each as a table of all candidates with their cluster and a FASTA of the representatives.
+- `06_tim3_binders/`: TIM-3 scFvs labelled by matching to the 30 Sanger-sequenced clones. `label_report.md` explains the labels; `labels/` holds the label tables; `fasta/` holds the labelled sequences; `representative_sets/` holds non-redundant strict-binder (`bind`) sets at 95, 96 and 97% protein identity and 99% DNA identity, each as a table of all candidates with their cluster and a FASTA of the representatives; its `README.md` describes the sets and `diversity_sweep_summary.tsv` summarises them.
 - `bind_context` (and `expanded_bind_positive`, which includes it) is not evidence of binding: these scFvs are identical to one binding and one or two non-binding Sanger clones, and the call rests on sequence outside the scFv (see `label_report.md`).

@@ -2,22 +2,16 @@
 
 This document describes what each step of the pipeline does and with which settings. Versions are pinned in
 `envs/` (conda packages, base images by digest) and `config/settings.env` (seq2scfv and dog reference commits).
-Some dependencies still float: the Miniconda installer, apt packages and CRAN packages inside the seq2scfv image
-(the CRAN packages are not used by the pipeline), and the dependencies of the pinned conda packages. Each run
+Some dependencies are not pinned: the Miniconda installer and the apt packages in the seq2scfv image, and the
+dependencies of the pinned conda and pip packages. Each run
 records what it used: step 07 copies the package lists of both conda environments and both Docker images into
 `results/provenance/`.
 
 ## Samples and inputs
 
 Ten barcoded libraries from one Nanopore run (flow cell FBD53635, run `20251008_Salibas_run1`, basecalling model
-`dna_r10.4.1_e8.2_400bps_sup`) were sequenced. `samples.csv` maps barcodes to target and panning round:
-
-| Barcodes | Target | Rounds |
-| --- | --- | --- |
-| 2, 3 | TIM-3 | 3, 4 |
-| 5, 6 | CEA5 | 3, 4 |
-| 7, 8, 9 | H460 PCNB | 2, 3, 4 |
-| 10, 11, 12 | huAEC | 2, 3, 4 |
+`dna_r10.4.1_e8.2_400bps_sup`) were sequenced. `samples.csv` gives the target and panning round of each barcode
+(table in the README).
 
 `TIM-3_sanger_binding.tsv` holds 30 Sanger-sequenced TIM-3 clones, each labelled as binding (`yes`) or not
 binding (`no`). All inputs are in a restricted Zenodo record (https://doi.org/10.5281/zenodo.24169294); step 00
@@ -33,7 +27,7 @@ which are chimeric. Filtlong keeps reads of at least 1,000 bases (`--min_length 
 bases by quality (`--keep_percent 90`). NanoPlot summarises the reads after each of the three stages, and MultiQC
 combines the 30 summaries into one report.
 
-## Step 02: preprocessing
+## Step 02: read orientation
 
 Reads are converted from FASTQ to FASTA. To orient them, IgBLAST 1.20.0 is run on every read against the dog
 V, D and J germline databases (`-organism dog -ig_seqtype Ig -domain_system imgt`, one alignment per gene,
@@ -78,14 +72,15 @@ Figures:
 - the 10 most abundant scFvs of each barcode followed across all barcodes, as a percentage of each barcode's reads;
 - barcodes clustered by the log number of shared scFvs (Euclidean distance, Ward linkage).
 
-## Step 05: specificity analyses
+## Step 05: sequence families
 
 All analyses use the per-read filtered table from step 04 and unique scFv DNA sequences.
 
 - **H460 PCNB round 4 candidates:** sequences with reads in H460 PCNB round 4 (barcode 9) and none in huAEC round 4
   (barcode 12). Each is described by its 5-letter DNA motif frequencies (L2-normalised), projected on two principal
-  components, and grouped into 20 families with mini-batch k-means (random seed 42). For each sequence the cosine
-  similarity to its nearest neighbour is reported, and family similarity is shown as a binned heatmap (140 bins).
+  components, and grouped into 20 families (the `cluster` columns of the tables) with mini-batch k-means (random
+  seed 42). For each sequence the cosine similarity to its nearest neighbour is reported, and family similarity is
+  shown as a binned heatmap (140 bins).
 - **All rounds and targets:** the same with 4-letter motifs and 24 families on all sequences from rounds 2 to 4.
   Each sample's read-weighted average position (centroid) is computed, and the overlap of sequence sets between
   samples is measured by the Jaccard index. Joining each target's centroids by round gives the trajectories.
@@ -96,13 +91,12 @@ All analyses use the per-read filtered table from step 04 and unique scFv DNA se
 
 1. TIM-3 reads (barcodes 2 and 3) are collapsed by exact scFv DNA sequence.
 2. Each sequence is compared with the 30 Sanger clones: the 5 `yes` and the 5 `no` clones sharing the most 15-letter
-   k-mers with it (at least 3) are aligned with edlib (at most 100 edits), and the best `yes` and the best `no`
-   match are kept. When two clones align equally well, the one sharing more k-mers, then the lower clone number, is
-   reported.
+   k-mers with it (at least 3) are aligned with edlib, the shorter sequence as an infix of the longer one (at most
+   100 edits), and the best `yes` and the best `no` match are kept. When two clones align equally well, the one
+   sharing more k-mers, then the lower clone number, is reported.
 3. First-pass label: a `yes` or `no` match counts if it has at least 99% identity and covers at least 90% of the
    scFv and 95% of the shorter of the two sequences. With no counting match the label is `unknown`; with one, it
-   is `bind` or `no_bind`; with both, it is `ambiguous` (two counting matches can differ by at most 1 percentage
-   point of identity, so the code's "higher identity wins" branch does not occur).
+   is `bind` or `no_bind`; with both, it is `ambiguous`.
 4. For ambiguous sequences with at least 10 reads, the competing `yes` and `no` Sanger clones are aligned to the full
    Nanopore reads. A sequence is relabelled `bind_context` when most of its reads match the `yes` clone better by
    more than 0.5 percentage points of identity and the `yes` clone aligns to the full reads with at least 91%

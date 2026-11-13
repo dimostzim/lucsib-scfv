@@ -13,14 +13,14 @@ Usage:
   bash run_all.sh [--from STEP] [--to STEP]
 
 Steps:
-  00  download inputs from Zenodo; download and build tools
+  00  inputs and tools
   01  read QC
-  02  read preprocessing (FASTQ to oriented FASTA)
+  02  read orientation
   03  scFv annotation (seq2scfv)
-  04  count tables and overview figures (R notebook)
-  05  specificity analyses (figures 1-4)
-  06  TIM-3 binder labels and representative sets
-  07  collect results
+  04  count tables (figures 5-13)
+  05  sequence families (figures 1-4)
+  06  TIM-3 binders
+  07  results
 EOF
 }
 
@@ -77,15 +77,15 @@ if run_step 01; then
 fi
 
 if run_step 02; then
-  echo "PROGRESS 2/8 step 02: preprocessing"
+  echo "PROGRESS 2/8 step 02: read orientation"
   fresh_dir "${PREPROCESS_DIR}"
   bash "${REPO_DIR}/steps/02_preprocess/run_preprocess.sh" --input "${QC_DIR}/2_filtered/reads" \
-    --output "${PREPROCESS_DIR}" --germlines "${TOOLS}/germlines/dog" --orient igblast \
+    --output "${PREPROCESS_DIR}" --germlines "${TOOLS}/germlines/dog" \
     --cpus "${CPUS}" --image "${SEQ2SCFV_IMAGE}"
 fi
 
 if run_step 03; then
-  echo "PROGRESS 3/8 step 03: annotation"
+  echo "PROGRESS 3/8 step 03: scFv annotation"
   fresh_dir "${ANNOTATION_DIR}"
   bash "${REPO_DIR}/steps/03_annotate/run_seq2scfv.sh" --input-preprocessed "${PREPROCESS_DIR}" \
     --output-dir "${ANNOTATION_DIR}" --germlines "${TOOLS}/germlines/dog" --threads "${CPUS}" \
@@ -100,7 +100,7 @@ if run_step 04; then
 fi
 
 if run_step 05; then
-  echo "PROGRESS 5/8 step 05: specificity"
+  echo "PROGRESS 5/8 step 05: sequence families"
   fresh_dir "${SPECIFICITY_DIR}"
   bash "${REPO_DIR}/steps/05_specificity/run_specificity.sh" --tables-dir "${COUNT_TABLES_DIR}/r_output/tables" \
     --samples-csv "${INPUTS}/samples.csv" --output-dir "${SPECIFICITY_DIR}" --python-env "${TOOLS}/envs/python"
@@ -115,7 +115,7 @@ if run_step 06; then
 fi
 
 if run_step 07; then
-  echo "PROGRESS 7/8 step 07: collect results"
+  echo "PROGRESS 7/8 step 07: results"
   fresh_dir "${RESULTS_DIR}"
   "${TOOLS}/envs/python/bin/python" "${REPO_DIR}/steps/07_collect_results/collect_results.py" \
     --work-dir "${WORK_DIR}" --output-dir "${RESULTS_DIR}" --repo-dir "${REPO_DIR}"
