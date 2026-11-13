@@ -40,18 +40,9 @@ The pipeline needs 12 files, all in the Zenodo record:
 
 ## Results
 
-Step 07 copies the final tables and figures into `<WORK_DIR>/results/`; the same files are in the results archive on
-Zenodo. `results/README.md` describes every file. The main results are:
-
-- 13 numbered figures, for example the sequence families of H460 PCNB round 4, how often each scFv was read, the
-  diversity of each sample, and how many scFvs the samples share.
-- Count tables with the number of reads of each distinct scFv in each sample. A distinct scFv is a unique pair of
-  heavy and light chain protein sequences. Each chain has three antigen-binding loops, the complementarity-determining
-  regions (CDRs), and the CDR3 is the most variable of them. There are also tables for pairs of heavy and light chain
-  CDR3s and for heavy chain CDR3s alone.
-- Read counts after each QC stage and through the scFv annotation.
-- The TIM-3 scFvs labelled by matching them to the Sanger clones, and non-redundant sets of likely binders.
-- The pipeline version, settings and software versions of the run (`provenance/`).
+Step 07 copies the final tables and figures into `<WORK_DIR>/results/`, and the same files are in the results
+archive on Zenodo. They include 13 numbered figures, the count tables, the read counts through QC and annotation,
+the TIM-3 binder labels and sets, and the software versions of the run; `results/README.md` describes every file.
 
 ## Analysis steps
 
@@ -65,9 +56,11 @@ Zenodo. `results/README.md` describes every file. The main results are:
 - **02 Read orientation.** Converts the reads to FASTA and turns each read so that the scFv runs in the same
   direction, using IgBLAST against the dog germline genes.
 - **03 scFv annotation.** seq2scfv finds the heavy chain, linker and light chain in each read, assigns germline genes
-  and CDRs, keeps reads with one complete in-frame scFv, and counts each scFv in each sample.
-- **04 Count tables.** An R notebook filters the scFvs, counts each distinct scFv, CDR3 pair and heavy chain CDR3 in
-  each sample, and draws figures 5 to 13.
+  and the complementarity-determining regions (CDRs, the three antigen-binding loops of each chain), keeps reads with
+  one complete in-frame scFv, and counts each scFv in each sample.
+- **04 Count tables.** An R notebook filters the scFvs and counts, in each sample, each distinct scFv (a unique pair
+  of heavy and light chain protein sequences), each pair of heavy and light chain CDR3s, and each heavy chain CDR3.
+  It also draws figures 5 to 13.
 - **05 Sequence families.** Groups scFv DNA sequences into families by sequence similarity, for H460 PCNB round 4
   and for all rounds and targets, follows each target across rounds, and compares CDR3 sharing between the H460 PCNB
   and huAEC rounds (figures 1 to 4).
@@ -83,11 +76,9 @@ analysis of February to June 2026.
 ### Requirements
 
 - Linux with Docker (your user must be able to run `docker`), conda, git and Python 3.8 or newer.
-- About 250 GB of disk, 64 CPU threads (fewer also works, more slowly) and at least 64 GB of memory.
-- Internet access to Zenodo, GitHub, conda-forge, bioconda and Docker Hub. Proxy variables in the environment are
-  passed to the Docker builds.
-
-A full run took 6 h 09 min with 64 threads. About 3 h 40 min of it is the scFv annotation (step 03).
+- About 250 GB of disk, 64 CPU threads and at least 64 GB of memory. A full run takes about 6 hours with 64 threads;
+  fewer threads also work, more slowly.
+- Internet access to Zenodo, GitHub, conda-forge, bioconda and Docker Hub.
 
 ### Getting the input files
 
@@ -111,18 +102,4 @@ bash run_all.sh                           # all steps
 bash run_all.sh --from 04 --to 07         # only steps 04 to 07
 ```
 
-`run_all.sh` prints `PROGRESS` lines and stops at the first error. Rerunning a step first deletes that step's
-folder, so its outputs are never mixed with older or partial files. Step 00 keeps input files that are already
-downloaded and checked, and reuses conda environments whose definition in `envs/` has not changed.
-
-## Repository layout
-
-```text
-run_all.sh                 runs every step
-config/settings.env        work folder, CPUs, Zenodo record, pinned tool versions, image names
-config/inputs_sha256.tsv   names and checksums of the 12 input files
-envs/                      Dockerfiles (QC, seq2scfv) and conda environments (R, Python)
-steps/                     one folder per step
-tools/zenodo_upload.py     maintainer tool to create the Zenodo draft and upload files
-docs/methods.md            methods
-```
+`run_all.sh` stops at the first error, and rerunning a step replaces its outputs.
